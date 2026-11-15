@@ -1374,6 +1374,13 @@ func resumedFromSession(resume *session.ResumeState) string {
 	return resume.SessionID
 }
 
+// renderTaskContent expands only placeholders in the original template.
+// Replacement values (rules, memory, diffs, background and model output) are
+// opaque data and must never become another template or optional block.
+func renderTaskContent(content string, replacements ...string) string {
+	return strings.NewReplacer(replacements...).Replace(content)
+}
+
 // buildMainTaskMessages renders the MAIN_TASK messages for one review round.
 // planResult is "" for round 2+ (stripped via stripEmptyPlanBlock).
 // confirmed is "" on round 1 (stripped via stripEmptyConfirmedBlock).
@@ -1382,19 +1389,22 @@ func (a *Agent) buildMainTaskMessages(rule, changeFiles, diffs, planResult, conf
 	messages := make([]llm.Message, 0, len(rawMsgs))
 	for _, m := range rawMsgs {
 		content := m.Content
-		content = strings.ReplaceAll(content, "{{current_system_date_time}}", a.currentDate)
-		content = strings.ReplaceAll(content, "{{system_rule}}", rule)
-		content = strings.ReplaceAll(content, "{{change_files}}", changeFiles)
-		content = strings.ReplaceAll(content, "{{diffs}}", diffs)
-		content = strings.ReplaceAll(content, "{{requirement_background}}", a.args.Background)
+		// Remove optional template blocks before inserting opaque replacement data.
 		if planResult == "" {
 			content = stripEmptyPlanBlock(content)
 		}
-		content = strings.ReplaceAll(content, "{{plan_guidance}}", planResult)
 		if confirmed == "" {
 			content = stripEmptyConfirmedBlock(content)
 		}
-		content = strings.ReplaceAll(content, "{{confirmed_comments}}", confirmed)
+		content = renderTaskContent(content,
+			"{{current_system_date_time}}", a.currentDate,
+			"{{system_rule}}", rule,
+			"{{change_files}}", changeFiles,
+			"{{diffs}}", diffs,
+			"{{requirement_background}}", a.args.Background,
+			"{{plan_guidance}}", planResult,
+			"{{confirmed_comments}}", confirmed,
+		)
 		messages = append(messages, llm.NewTextMessage(m.Role, content))
 	}
 	return messages
@@ -1861,13 +1871,14 @@ func (a *Agent) executeGroupPlanPhase(ctx context.Context, g FileGroup, concaten
 	pt := a.args.Template.PlanTask
 	messages := make([]llm.Message, 0, len(pt.Messages))
 	for _, m := range pt.Messages {
-		content := m.Content
-		content = strings.ReplaceAll(content, "{{current_system_date_time}}", a.currentDate)
-		content = strings.ReplaceAll(content, "{{system_rule}}", rule)
-		content = strings.ReplaceAll(content, "{{change_files}}", changeFiles)
-		content = strings.ReplaceAll(content, "{{diffs}}", concatenatedDiffs)
-		content = strings.ReplaceAll(content, "{{requirement_background}}", a.args.Background)
-		content = strings.ReplaceAll(content, "{{plan_tools}}", formatToolDefs(a.args.PlanToolDefs))
+		content := renderTaskContent(m.Content,
+			"{{current_system_date_time}}", a.currentDate,
+			"{{system_rule}}", rule,
+			"{{change_files}}", changeFiles,
+			"{{diffs}}", concatenatedDiffs,
+			"{{requirement_background}}", a.args.Background,
+			"{{plan_tools}}", formatToolDefs(a.args.PlanToolDefs),
+		)
 		messages = append(messages, llm.NewTextMessage(m.Role, content))
 	}
 
@@ -1964,10 +1975,11 @@ func (a *Agent) executeGroupReviewFilter(ctx context.Context, g FileGroup, from 
 
 	messages := make([]llm.Message, 0, len(ft.Messages))
 	for _, m := range ft.Messages {
-		content := m.Content
-		content = strings.ReplaceAll(content, "{{path}}", groupKey)
-		content = strings.ReplaceAll(content, "{{diff}}", concatenatedDiffs)
-		content = strings.ReplaceAll(content, "{{comments}}", commentsJSON)
+		content := renderTaskContent(m.Content,
+			"{{path}}", groupKey,
+			"{{diff}}", concatenatedDiffs,
+			"{{comments}}", commentsJSON,
+		)
 		messages = append(messages, llm.NewTextMessage(m.Role, content))
 	}
 
