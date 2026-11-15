@@ -10,8 +10,10 @@ fi
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$root"
 export GOTOOLCHAIN=local GOENV=off GOWORK=off GO111MODULE=on GOFIPS140=off LC_ALL=C
-if [ "$(go version | awk '{print $3}')" != go1.26.10 ]; then
-  echo "qualify.sh: Go 1.26.10 is required" >&2
+source tools/managed/release.env
+[[ "$GO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+if [ "$(go version | awk '{print $3}')" != "go${GO_VERSION}" ]; then
+  echo "qualify.sh: Go ${GO_VERSION} is required" >&2
   exit 1
 fi
 exec go run -mod=readonly ./tools/managed/qualification "$1" "$2"

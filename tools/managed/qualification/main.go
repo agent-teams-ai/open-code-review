@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -154,7 +155,7 @@ func qualify(args []string) error {
 		manifest["binary_sha256"] != hash || manifest["binary_name"] != filepath.Base(binary) ||
 		manifest["outcome_schema_version"] != outcomeSchema ||
 		manifest["repository"] != "agent-teams-ai/open-code-review" || manifest["cgo_enabled"] != "0" || manifest["goamd64"] != "v1" ||
-		manifest["toolchain"] != "go1.26.10" || manifest["goos"] != "linux" || manifest["goarch"] != "amd64" {
+		manifest["toolchain"] != runtime.Version() || manifest["goos"] != "linux" || manifest["goarch"] != "amd64" {
 		return errors.New("manifest does not match this binary, source checkout or qualified profile")
 	}
 	info, err := os.Stat(binary)

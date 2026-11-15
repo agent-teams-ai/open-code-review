@@ -108,7 +108,7 @@ in experiment evidence.
 
 `tools/managed/build.sh` is the fork's build entrypoint and
 `tools/managed/qualify.sh` is its model-free qualification entrypoint. On
-Linux/amd64 with Go 1.26.10 on `PATH`, run from a clean, committed checkout:
+Linux/amd64 with Go 1.26.11 on `PATH`, run from a clean, committed checkout:
 
 ```sh
 tools/managed/build.sh
@@ -126,10 +126,21 @@ repeat. Build with the declared toolchain; do not silently build the newest
 upstream revision or select a different Go release.
 
 [`tools/managed/release.env`](../tools/managed/release.env) owns the managed
-version and toolchain inputs. The first fork build is `1.13.1-rr.7`, keeping
-packaging and license-header changes separate from the frozen `1.13.1-rr.6`
-artifact. This version assignment alone is not evidence that a release has
-been built, qualified or published.
+version and exact toolchain inputs. The root `go.mod` requires Go 1.26.11, and
+CI installs that declared version. The qualification wrapper checks the exact
+release toolchain pin; its harness then checks that the manifest records the
+same Go version used to compile the harness. The first fork build is
+`1.13.1-rr.7`, keeping packaging, license-header and toolchain changes separate
+from the frozen `1.13.1-rr.6` artifact. This version assignment alone is not
+evidence that a release has been built, qualified or published.
+
+The migration's vulnerability check found
+[GO-2026-6859 / CVE-2026-97054](https://pkg.go.dev/vuln/GO-2026-6859) in the
+Go 1.26.10 standard library. The new fork build uses the fixed Go 1.26.11
+toolchain. This security update applies to `1.13.1-rr.7`; the historical import
+commit, Go 1.26.10 reproduction record and approved `1.13.1-rr.6` binary remain
+unchanged. Rebuilding the old experiment artifact with a different toolchain
+would produce a new experiment input and must not replace the frozen one.
 
 The build must identify the source commit, toolchain, version and build flags
 alongside the executable digest. Qualification uses fixed responses from a local
