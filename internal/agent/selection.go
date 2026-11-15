@@ -81,6 +81,16 @@ func (a *Agent) whyExcluded(d model.Diff) ExcludeReason {
 		return ExcludeSecret
 	}
 
+	// Admission inventory is enforced before grouping or any model request.
+	// Native includes are force-includes, not allowlists. Preserve the hard
+	// binary/credential gates above, then select only exact admitted paths.
+	if f != nil && f.ManagedPaths != nil {
+		if !f.ManagedPaths[path] {
+			return ExcludeUserRule
+		}
+		return ExcludeNone
+	}
+
 	if f != nil && f.IsUserExcluded(path) {
 		return ExcludeUserRule
 	}

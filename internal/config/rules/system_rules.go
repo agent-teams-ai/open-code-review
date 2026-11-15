@@ -207,20 +207,24 @@ type ProjectRuleEntry struct {
 	Path            string `json:"path"`
 	Rule            string `json:"rule"`
 	MergeSystemRule bool   `json:"merge_system_rule,omitempty"`
+	ExactPath       bool   `json:"reviewrouter_exact_path,omitempty"`
 }
 
 // ProjectRule holds rules loaded from <repoDir>/.opencodereview/rule.json.
 type ProjectRule struct {
-	Rules   []ProjectRuleEntry `json:"rules"`
-	Include []string           `json:"include,omitempty"`
-	Exclude []string           `json:"exclude,omitempty"`
+	Rules        []ProjectRuleEntry `json:"rules"`
+	ManagedPaths *[]string          `json:"reviewrouter_managed_paths,omitempty"`
+	Include      []string           `json:"include,omitempty"`
+	Exclude      []string           `json:"exclude,omitempty"`
 }
 
 // FileFilter holds the merged user-configured include/exclude glob patterns
 // collected from all rule.json layers (custom, project, global).
 type FileFilter struct {
-	Include []string
-	Exclude []string
+	// Non-nil only for a trusted managed exact inventory. Empty denies all.
+	ManagedPaths map[string]bool
+	Include      []string
+	Exclude      []string
 }
 
 // HasInclude reports whether any include patterns are configured.
@@ -321,6 +325,23 @@ func NewResolver(repoDir, customRulePath string, opts ResolverOptions) (Resolver
 		if err != nil {
 			return nil, nil, err
 		}
+		if cr.ManagedPaths != nil && !opts.SkipProjectRules {
+			return nil, nil, fmt.Errorf("managed path inventory requires managed mode")
+		}
+		if cr.ManagedPaths != nil {
+			seen := make(map[string]bool)
+			for _, path := range *cr.ManagedPaths {
+				if path == "" || strings.HasPrefix(path, "/") || strings.Contains(path, "\\") || strings.Contains(path, "\x00") || seen[path] {
+					return nil, nil, fmt.Errorf("invalid managed path inventory")
+				}
+				seen[path] = true
+			}
+			for _, entry := range cr.Rules {
+				if !entry.ExactPath || !seen[entry.Path] || !entry.MergeSystemRule || entry.Rule == "" {
+					return nil, nil, fmt.Errorf("invalid managed exact rule")
+				}
+			}
+		}
 		customRule = cr
 	}
 
@@ -339,6 +360,15 @@ func NewResolver(repoDir, customRulePath string, opts ResolverOptions) (Resolver
 	}
 
 	filter := buildFileFilter(customRule, projectRule, globalRule)
+	if customRule != nil && customRule.ManagedPaths != nil {
+		if filter == nil {
+			filter = &FileFilter{}
+		}
+		filter.ManagedPaths = make(map[string]bool)
+		for _, path := range *customRule.ManagedPaths {
+			filter.ManagedPaths[path] = true
+		}
+	}
 
 	return &composedResolver{
 		custom:  customRule,
@@ -477,7 +507,16 @@ func (c *composedResolver) CanonicalConfig() []string {
 		if pr == nil {
 			return
 		}
+		if pr.ManagedPaths != nil {
+			fields = append(fields, "managed-paths-v1")
+			for _, path := range *pr.ManagedPaths {
+				fields = append(fields, "managed-path", path)
+			}
+		}
 		for _, e := range pr.Rules {
+			if e.ExactPath {
+				fields = append(fields, "exact-path-v1")
+			}
 			merge := "0"
 			if e.MergeSystemRule {
 				merge = "1"
@@ -548,6 +587,12 @@ func matchProjectRuleEntry(pr *ProjectRule, path string) *ProjectRuleEntry {
 	for i := range pr.Rules {
 		entry := &pr.Rules[i]
 		if entry.Rule == "" && !entry.MergeSystemRule {
+			continue
+		}
+		if entry.ExactPath {
+			if entry.Path == path {
+				return entry
+			}
 			continue
 		}
 		expanded := expandBraces(entry.Path)
