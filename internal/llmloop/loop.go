@@ -877,13 +877,11 @@ func (r *Runner) executeToolCall(ctx context.Context, taskKey string, call llm.T
 			asyncCtx := context.WithoutCancel(ctx)
 			var cancelAsync context.CancelFunc
 			if r.deps.Managed {
-				// Managed (plan §7.2): the worker gets the original bounded
-				// group context instead of a fully detached one — it keeps the
-				// group context's values but its own lifetime (cancelled when
-				// the worker completes). Root cancellation is enforced by the
-				// run-wide client wrapper, so a cancelled run can neither hold
-				// the serialization permit nor start a later model call.
-				asyncCtx, cancelAsync = context.WithCancel(context.WithoutCancel(ctx))
+				// Keep the group deadline and cancellation while the caller
+				// awaits these workers. The run-wide client also observes root
+				// cancellation, but the root does not carry --timeout's
+				// per-group deadline.
+				asyncCtx, cancelAsync = context.WithCancel(ctx)
 			}
 			toolName := t.Name()
 			pool.SubmitFor(taskKey, func() ([]model.LlmComment, error) {

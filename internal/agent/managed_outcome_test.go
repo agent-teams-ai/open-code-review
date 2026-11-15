@@ -384,6 +384,51 @@ func TestClassifyFilterResponse(t *testing.T) {
 			wantVerdict: managedFilterParse{received: true, malformed: true},
 		},
 		{
+			name:        "explicit empty tool selection is valid",
+			calls:       call("report_incorrect_comments", `{"comment_ids":[]}`),
+			wantVerdict: managedFilterParse{received: true, parsed: true},
+		},
+		{
+			name:        "null tool arguments supply no decision",
+			calls:       call("report_incorrect_comments", `null`),
+			wantVerdict: managedFilterParse{received: true, malformed: true},
+		},
+		{
+			name:        "missing selection supplies no decision",
+			calls:       call("report_incorrect_comments", `{}`),
+			wantVerdict: managedFilterParse{received: true, malformed: true},
+		},
+		{
+			name:        "null selection supplies no decision",
+			calls:       call("report_incorrect_comments", `{"comment_ids":null}`),
+			wantVerdict: managedFilterParse{received: true, malformed: true},
+		},
+		{
+			name:        "null selection member is not a comment id",
+			calls:       call("report_incorrect_comments", `{"comment_ids":[null]}`),
+			wantVerdict: managedFilterParse{received: true, malformed: true},
+		},
+		{
+			name:        "null text selection member is not a comment id",
+			content:     `[null]`,
+			wantVerdict: managedFilterParse{received: true, malformed: true},
+		},
+		{
+			name:        "malformed approve arguments degrade",
+			calls:       call("approve_all_comments", `not json`),
+			wantVerdict: managedFilterParse{received: true, malformed: true},
+		},
+		{
+			name:        "a later valid selection does not hide malformed input",
+			calls:       append(call("report_incorrect_comments", `null`), call("approve_all_comments", `{}`)...),
+			wantVerdict: managedFilterParse{received: true, malformed: true},
+		},
+		{
+			name:        "null text supplies no decision",
+			content:     `null`,
+			wantVerdict: managedFilterParse{received: true, malformed: true},
+		},
+		{
 			name:        "text fallback parses an empty removal set",
 			content:     `[]`,
 			wantIndices: 0,

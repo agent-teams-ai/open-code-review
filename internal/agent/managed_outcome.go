@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -663,9 +664,51 @@ func classifyFilterResponse(calls []llm.ToolCall, content string, total int) (in
 	}
 	verdict.received = len(calls) > 0 || strings.TrimSpace(content) != ""
 	verdict.malformed = toolMalformed
+	for _, call := range calls {
+		if !validManagedFilterArguments(call) {
+			verdict.malformed = true
+		}
+	}
+	if textParsed {
+		// JSON null unmarshals to a nil slice without an error; unlike [],
+		// it supplies no removal decision. Keep native fallback behavior,
+		// but do not attest to a parsed filter decision.
+		textParsed = validManagedFilterSelection([]byte(llmloop.StripMarkdownFences(content)))
+	}
 	if !toolDecision && !textParsed && verdict.received {
 		verdict.malformed = true
 	}
 	verdict.parsed = (toolDecision || textParsed) && !verdict.malformed
 	return indices, verdict
+}
+
+// validManagedFilterArguments validates only the decision-bearing fields for
+// the managed outcome. Native removal/fallback semantics remain unchanged.
+func validManagedFilterArguments(call llm.ToolCall) bool {
+	switch call.Function.Name {
+	case "approve_all_comments", "report_incorrect_comments":
+		var args map[string]json.RawMessage
+		if json.Unmarshal([]byte(call.Function.Arguments), &args) != nil || args == nil {
+			return false
+		}
+		if call.Function.Name == "approve_all_comments" {
+			return true
+		}
+		return validManagedFilterSelection(args["comment_ids"])
+	default:
+		return true // Unrecognized tools are handled by the native text fallback.
+	}
+}
+
+func validManagedFilterSelection(raw []byte) bool {
+	var ids []any
+	if json.Unmarshal(raw, &ids) != nil || ids == nil {
+		return false
+	}
+	for _, id := range ids {
+		if _, ok := id.(string); !ok {
+			return false
+		}
+	}
+	return true
 }
