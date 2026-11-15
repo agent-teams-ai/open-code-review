@@ -411,10 +411,8 @@ type ClientConfig struct {
 	ChatGPTPlan           bool
 	ChatGPTAccount        string
 
-	// StrictTerminal is the independent strict terminal-completion check for
-	// streaming Responses calls (only response.completed + completed status is
-	// success). Independent from ChatGPTPlan so managed mode can enforce it
-	// without adopting any ChatGPT OAuth semantics.
+	// StrictTerminal requires proven completion for Responses streams or native
+	// Anthropic Messages. It is independent from ChatGPTPlan and OAuth semantics.
 	StrictTerminal bool
 
 	// MaxRetries optionally overrides the SDK retry count: nil keeps the
@@ -1545,6 +1543,11 @@ func (c *AnthropicClient) CompletionsWithCtx(ctx context.Context, req ChatReques
 		return nil, c.explainError(model, err)
 	}
 
+	if c.cfg.StrictTerminal {
+		if err := validateManagedAnthropicResponse(sdkResp, model, params.MaxTokens, req.Tools); err != nil {
+			return nil, err
+		}
+	}
 	return c.mapAnthropicResponse(sdkResp), nil
 }
 

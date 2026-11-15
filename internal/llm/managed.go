@@ -172,8 +172,8 @@ func resolveManagedEntry(entry managedProviderEntry, opts ResolveOptions) (Resol
 	}
 
 	protocol := NormalizeProtocol(entry.Protocol)
-	if protocol != ProtocolOpenAIResponses {
-		return ResolvedEndpoint{}, fmt.Errorf("managed mode requires protocol %q, got %q", ProtocolOpenAIResponses, entry.Protocol)
+	if protocol != ProtocolOpenAIResponses && protocol != ProtocolAnthropic {
+		return ResolvedEndpoint{}, fmt.Errorf("managed mode requires protocol %q or %q, got %q", ProtocolOpenAIResponses, ProtocolAnthropic, entry.Protocol)
 	}
 
 	baseURL, err := validateManagedURL(entry.URL)
@@ -202,7 +202,12 @@ func resolveManagedEntry(entry managedProviderEntry, opts ResolveOptions) (Resol
 		return ResolvedEndpoint{}, fmt.Errorf("managed mode requires a positive timeout_sec per-request cap")
 	}
 
-	extraBody, err := validateManagedExtraBody(entry.ExtraBody)
+	var extraBody map[string]any
+	if protocol == ProtocolAnthropic {
+		extraBody, err = validateManagedAnthropicExtraBody(entry.ExtraBody)
+	} else {
+		extraBody, err = validateManagedExtraBody(entry.ExtraBody)
+	}
 	if err != nil {
 		return ResolvedEndpoint{}, err
 	}
@@ -215,11 +220,11 @@ func resolveManagedEntry(entry managedProviderEntry, opts ResolveOptions) (Resol
 		Token:                 token,
 		Model:                 model,
 		Provider:              ManagedProviderName,
-		Protocol:              ProtocolOpenAIResponses,
+		Protocol:              protocol,
 		Source:                "managed:" + ManagedProviderName,
 		ExtraBody:             extraBody,
 		Timeout:               timeout,
-		RequiresStreaming:     true,
+		RequiresStreaming:     protocol == ProtocolOpenAIResponses,
 		RejectsSamplingParams: true,
 		ChatGPTPlan:           false,
 		StrictTerminal:        true,
