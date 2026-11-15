@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/alibaba/open-code-review/internal/config/template"
+	"github.com/alibaba/open-code-review/internal/llm"
 	"github.com/spf13/cobra"
 )
 
@@ -76,6 +77,13 @@ func addPreviewFlag(cmd *cobra.Command, target *bool) {
 	cmd.Flags().BoolVarP(target, "preview", "p", false, "preview which files will be reviewed without running the LLM")
 }
 
+// addManagedFlag registers the review-only managed compatibility flag. Managed
+// mode pins provider/config/transport to the Review Router contract (plan §5.1)
+// and is only valid together with an explicit --provider reviewrouter.
+func addManagedFlag(cmd *cobra.Command, target *bool) {
+	cmd.Flags().BoolVar(target, "reviewrouter-managed", false, "managed Review Router mode: pinned provider, config and transport contract (requires --provider reviewrouter)")
+}
+
 func completeEnum(values ...string) func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 	return func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return values, cobra.ShellCompDirectiveNoFileComp
@@ -126,6 +134,9 @@ func validateOutputFormat(format string) (string, error) {
 func validateReviewOptions(opts *reviewOptions) error {
 	if err := validateDiffMode(opts.from, opts.to, opts.commit); err != nil {
 		return err
+	}
+	if opts.managed && opts.provider != llm.ManagedProviderName {
+		return fmt.Errorf("--reviewrouter-managed requires an explicit --provider %s", llm.ManagedProviderName)
 	}
 	if opts.preview && opts.resume != "" {
 		return fmt.Errorf("--preview and --resume cannot be used together")
@@ -219,6 +230,7 @@ func registerReviewFlags(cmd *cobra.Command, opts *reviewOptions) {
 	cmd.RegisterFlagCompletionFunc("effort", completeEnum(template.EffortNames()...))
 	cmd.Flags().BoolVar(&opts.noFilter, "no-filter", false, "keep all review comments without LLM post-filtering")
 	addPreviewFlag(cmd, &opts.preview)
+	addManagedFlag(cmd, &opts.managed)
 }
 
 // registerScanFlags registers all scan command flags on cmd, binding to opts.

@@ -68,6 +68,41 @@ func TestParseReviewFlags_PreviewWithResume(t *testing.T) {
 	}
 }
 
+func TestParseReviewFlags_Managed(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		wantErr  bool
+		wantFlag bool
+	}{
+		{"defaults to false", []string{"--commit", "abc123"}, false, false},
+		{"accepted with explicit provider reviewrouter", []string{"--commit", "abc123", "--reviewrouter-managed", "--provider", "reviewrouter"}, false, true},
+		{"combines with --preview", []string{"--commit", "abc123", "--reviewrouter-managed", "--provider", "reviewrouter", "--preview"}, false, true},
+		{"rejected without --provider", []string{"--commit", "abc123", "--reviewrouter-managed"}, true, false},
+		{"rejected with foreign provider", []string{"--commit", "abc123", "--reviewrouter-managed", "--provider", "anthropic"}, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, err := parseReviewFlags(tc.args)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), "--reviewrouter-managed") {
+					t.Errorf("error %q does not name --reviewrouter-managed", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseReviewFlags: %v", err)
+			}
+			if opts.managed != tc.wantFlag {
+				t.Errorf("managed = %v, want %v", opts.managed, tc.wantFlag)
+			}
+		})
+	}
+}
+
 func TestParseReviewFlags_InvalidAudience(t *testing.T) {
 	_, err := parseReviewFlags([]string{"--audience", "robot"})
 	if err == nil {

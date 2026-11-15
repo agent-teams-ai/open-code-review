@@ -39,6 +39,17 @@ type ResolvedEndpoint struct {
 	ChatGPTPlan           bool
 	ChatGPTAccount        string
 
+	// StrictTerminal enables the independent strict terminal-completion check
+	// for streaming Responses calls: only response.completed with completed
+	// status is a success; failed/incomplete/EOF are errors. It is a typed
+	// transport flag (managed mode sets it) and never implies ChatGPTPlan.
+	StrictTerminal bool
+
+	// MaxRetries optionally overrides the SDK retry count. Nil keeps the
+	// upstream default; an explicit 0 disables SDK retries entirely. Managed
+	// mode sets 0. Pointer so "absent" and "explicit zero" stay distinguishable.
+	MaxRetries *int
+
 	// AmbientAuth marks an endpoint that carries no token and needs no base
 	// URL, because the transport supplies both — AWS SigV4 signing derives the
 	// host from the region and the credentials from the environment's own
@@ -84,6 +95,13 @@ type ResolveOptions struct {
 	Provider string
 	Model    string
 	Context  context.Context
+
+	// Managed selects the typed managed review mode (the --reviewrouter-managed
+	// flag). When set, resolution is handled by ResolveManagedEndpoint before
+	// any general strategy: only the controlled custom_providers.reviewrouter
+	// entry of the config file is consulted, and ambient/inherited credentials
+	// are rejected. Provider must be ManagedProviderName.
+	Managed bool
 }
 
 // ResolveEndpoint resolves an endpoint without per-run overrides.
@@ -103,6 +121,14 @@ func ResolveEndpointWithModelOverride(configPath, modelOverride string) (Resolve
 func ResolveEndpointWithOptions(configPath string, opts ResolveOptions) (ResolvedEndpoint, error) {
 	opts.Provider = strings.TrimSpace(opts.Provider)
 	opts.Model = strings.TrimSpace(opts.Model)
+
+	// Managed mode resolves before anything else — before env overrides, before
+	// config-file credential resolution, before api_key_cmd can run — so no
+	// inherited credential or endpoint override can reach the controlled
+	// endpoint.
+	if opts.Managed {
+		return ResolveManagedEndpoint(configPath, opts)
+	}
 
 	// The global env overrides are parsed before any strategy runs, even though
 	// they are applied to the endpoint afterwards. Parsing them inside

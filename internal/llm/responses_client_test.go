@@ -860,7 +860,7 @@ func TestChatGPTStreamFailureDetails(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			events := responseStreamEvents(t, `{"type":"response.`+tc.eventType+`","response":{"id":"resp_failed","status":"`+tc.eventType+`","error":{"code":"rate_limit_exceeded","message":"rate limited","param":"model"}`+tc.details+`}}`)
-			accumulator := responseStreamAccumulator{requireCompleted: true}
+			accumulator := responseStreamAccumulator{requireCompleted: true, chatGPTPlan: true}
 			err := accumulator.add(events[0])
 			var streamErr *responseStreamEventError
 			if !errors.As(err, &streamErr) || streamErr.code != "rate_limit_exceeded" || streamErr.param != "model" {
@@ -868,6 +868,15 @@ func TestChatGPTStreamFailureDetails(t *testing.T) {
 			}
 			if streamErr.message != tc.want+"https://chatgpt.com/settings/usage" {
 				t.Fatalf("unexpected error message: %s", streamErr.message)
+			}
+			// Managed strict terminal mode shares the failure detection but keeps
+			// generic messages: no ChatGPT usage-management URL leaks into a
+			// non-ChatGPT endpoint's diagnostics (plan §7.1).
+			strict := responseStreamAccumulator{requireCompleted: true}
+			if err := strict.add(events[0]); err == nil {
+				t.Fatal("strict accumulator accepted a failed event")
+			} else if strings.Contains(err.Error(), "Manage usage") {
+				t.Fatalf("strict managed stream leaked the ChatGPT usage URL: %s", err.Error())
 			}
 		})
 	}

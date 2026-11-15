@@ -108,7 +108,9 @@ func previewMaxTokens(templateDefault, cliOverride int) (int, error) {
 // inspect when disambiguating ambiguous extensions — derive it via
 // tool.ParseReviewMode(from, to, commit).RefValue(to, commit). Pass "" to
 // read the working tree, which is what scan wants.
-func loadCommonContext(repoDirInput, rulePath, contentRef string, maxTools, maxGitProcs int, requireGit bool) (*commonContext, error) {
+// skipProjectRules drops the project .opencodereview/rule.json layer; managed
+// runs set it so rules from the reviewed PR repository never load (plan §5.1).
+func loadCommonContext(repoDirInput, rulePath, contentRef string, maxTools, maxGitProcs int, requireGit, skipProjectRules bool) (*commonContext, error) {
 	tpl, err := template.LoadDefault()
 	if err != nil {
 		return nil, fmt.Errorf("load default template: %w", err)
@@ -130,8 +132,9 @@ func loadCommonContext(repoDirInput, rulePath, contentRef string, maxTools, maxG
 	gitRunner := gitcmd.New(maxGitProcs)
 
 	resolver, fileFilter, err := rules.NewResolver(repoDir, rulePath, rules.ResolverOptions{
-		Ref:    contentRef,
-		Runner: gitRunner,
+		Ref:              contentRef,
+		Runner:           gitRunner,
+		SkipProjectRules: skipProjectRules,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("load rules: %w", err)
@@ -267,12 +270,21 @@ func loadLLMRuntime(tpl *template.Template, toolConfigPath string, resolveOpts l
 	retryCollector := newRetryCollector()
 
 	var rawHolder *llm.RawHolder
-	if llm.RawLoggingEnabled() {
+	if llm.RawLoggingEnabled() && !resolveOpts.Managed {
 		rawHolder = llm.NewRawHolder()
 	}
 
+	client := llm.NewLLMClient(ep, retryCollector, rawHolder)
+	if resolveOpts.Managed {
+		// Managed mode serializes model calls run-wide: at most one in-flight
+		// request for the whole run (plan §7.2). The run root context makes
+		// permit waits and in-flight requests respect root cancellation even
+		// when auxiliary code arrives via context.WithoutCancel.
+		client = llm.NewSerializingClient(client, resolveOpts.Context)
+	}
+
 	return &llmRuntime{
-		Client:         llm.NewLLMClient(ep, retryCollector, rawHolder),
+		Client:         client,
 		Model:          ep.Model,
 		Provider:       ep.Provider,
 		Source:         ep.Source,
@@ -739,6 +751,41 @@ func (w *lazyFileWriter) Close() error {
 	return nil
 }
 
+// managedResultByteLimit bounds the managed result document (plan §7.3,
+// "bounded serializer"): 16 MiB, the same ceiling the Responses stream
+// accumulator enforces on model output. A document past the limit fails the
+// write — and with it the command — instead of publishing a truncated result.
+const managedResultByteLimit = 16 << 20
+
+// limitWriter fails every Write once limit bytes have been produced (or an
+// earlier write failed). It reports deferred errors via Err so text-mode
+// rendering, which drops per-write errors, still fails the command non-zero.
+type limitWriter struct {
+	dst   io.Writer
+	limit int64
+	n     int64
+	err   error
+}
+
+func (w *limitWriter) Write(p []byte) (int, error) {
+	if w.err != nil {
+		return 0, w.err
+	}
+	if w.n+int64(len(p)) > w.limit {
+		w.err = fmt.Errorf("managed result exceeds the %d MiB output limit", w.limit>>20)
+		return 0, w.err
+	}
+	n, err := w.dst.Write(p)
+	w.n += int64(n)
+	if err != nil && w.err == nil {
+		w.err = err
+	}
+	return n, err
+}
+
+// Err reports the first write failure, including the size-limit rejection.
+func (w *limitWriter) Err() error { return w.err }
+
 // resolveOutputWriter resolves the --output target into a writer plus a
 // cleanup function.
 //   - "" or "-"      → os.Stdout with a no-op cleanup (colors preserved, no hint)
@@ -803,6 +850,13 @@ type resumeInfoProvider interface {
 	ResumeInfo() *agent.ResumeInfo
 }
 
+// managedOutcomeProvider is implemented by review agents that can freeze the
+// managed outcome contract (plan §7.3–7.4). scan agents never managed-run, so
+// the assertion simply fails there and the field stays absent.
+type managedOutcomeProvider interface {
+	ManagedOutcome() *agent.ManagedOutcome
+}
+
 // emitRunResult is the post-LLM-run finalization shared by `ocr review` and
 // `ocr scan`: resolves comment line numbers, records telemetry, restores
 // stdout early for agent-text audiences so the summary is visible, prints
@@ -844,9 +898,16 @@ func emitRunResult(
 	// share the same suppression of trace summaries and early stdout restore.
 	machineReadable := isMachineReadable(outputFormat)
 
+	// The frozen managed outcome, when this run is managed (plan §7.4). Absent
+	// for every unmanaged run, keeping native JSON byte-identical.
+	var managedOutcome *agent.ManagedOutcome
+	if p, ok := ag.(managedOutcomeProvider); ok {
+		managedOutcome = p.ManagedOutcome()
+	}
+
 	if machineReadable && manifest == nil && len(comments) == 0 && ag.FilesReviewed() == 0 {
 		if outputFormat == "json" {
-			return outputJSONNoFiles(traceID, llmIdentity, out)
+			return outputJSONNoFiles(traceID, llmIdentity, out, managedOutcome)
 		}
 		return outputSARIF(nil, Version, ag.Warnings(), manifest, out)
 	}
@@ -883,7 +944,7 @@ func emitRunResult(
 		return outputJSONWithWarnings(comments, ag.Warnings(), ag.FilesReviewed(),
 			ag.TotalInputTokens(), ag.TotalOutputTokens(), ag.TotalTokensUsed(),
 			ag.TotalCacheReadTokens(), ag.TotalCacheWriteTokens(), duration,
-			ag.ProjectSummary(), ag.ToolCalls(), ag.ToolFailures(), traceID, resumeInfo, ag.SessionID(), manifest, ag.BudgetExceeded(), llmIdentity, out, retryReport, groups)
+			ag.ProjectSummary(), ag.ToolCalls(), ag.ToolFailures(), traceID, resumeInfo, ag.SessionID(), manifest, ag.BudgetExceeded(), llmIdentity, out, retryReport, groups, managedOutcome)
 	}
 	if outputFormat == "sarif" {
 		return outputSARIF(comments, Version, ag.Warnings(), manifest, out)

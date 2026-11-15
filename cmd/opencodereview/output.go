@@ -348,6 +348,10 @@ type jsonOutput struct {
 	Resume         *agent.ResumeInfo     `json:"resume,omitempty"`
 	SessionID      string                `json:"session_id,omitempty"`
 	Manifest       *session.RunManifest  `json:"manifest,omitempty"`
+	// ReviewRouterOutcome is the frozen managed outcome contract
+	// (reviewrouter.ocr-outcome/v1, plan §7.3–7.4). Emitted only for
+	// --reviewrouter-managed runs and never for unmanaged output.
+	ReviewRouterOutcome *agent.ManagedOutcome `json:"reviewrouter_outcome,omitempty"`
 	// RetryReport is the frozen LLM retry report (ocr.llm-retry-report/v1).
 	// Reuses llm.RetryReport's own field/tag definitions rather than mirroring
 	// them here, and sits last with omitempty so a first-try-success run emits
@@ -374,7 +378,7 @@ func outputJSONWithWarnings(comments []model.LlmComment, warnings []agent.AgentW
 	duration time.Duration, projectSummary string, toolCalls map[string]int64, toolFailures []llmloop.ToolFailureDetail,
 	traceID string, resumeInfo *agent.ResumeInfo, sessionID string,
 	manifest *session.RunManifest, budgetExceeded bool, llmIdentity *jsonLLMIdentity, out io.Writer,
-	retryReport *llm.RetryReport, groups []agent.FileGroupInfo) error {
+	retryReport *llm.RetryReport, groups []agent.FileGroupInfo, managedOutcome *agent.ManagedOutcome) error {
 	publishedWarnings := warningsForOutput(warnings, manifest)
 	payload := jsonOutput{
 		Status:   "success",
@@ -392,12 +396,13 @@ func outputJSONWithWarnings(comments []model.LlmComment, warnings []agent.AgentW
 			Elapsed:          duration.Round(time.Second).String(),
 			BudgetExceeded:   budgetExceeded,
 		},
-		Groups:         groups,
-		ProjectSummary: projectSummary,
-		Resume:         resumeInfo,
-		SessionID:      sessionID,
-		Manifest:       manifest,
-		RetryReport:    retryReport,
+		Groups:              groups,
+		ProjectSummary:      projectSummary,
+		Resume:              resumeInfo,
+		SessionID:           sessionID,
+		Manifest:            manifest,
+		ReviewRouterOutcome: managedOutcome,
+		RetryReport:         retryReport,
 	}
 	payload.ToolCalls = newJSONToolCalls(toolCalls, toolFailures)
 	if manifest != nil {
@@ -648,14 +653,15 @@ func manifestMessage(manifest *session.RunManifest, findings int) string {
 	}
 }
 
-func outputJSONNoFiles(traceID string, llmIdentity *jsonLLMIdentity, out io.Writer) error {
+func outputJSONNoFiles(traceID string, llmIdentity *jsonLLMIdentity, out io.Writer, managedOutcome *agent.ManagedOutcome) error {
 	payload := jsonOutput{
-		Status:    "skipped",
-		LLM:       llmIdentity,
-		TraceID:   traceID,
-		Message:   "No supported files changed.",
-		Comments:  []model.LlmComment{},
-		ToolCalls: newJSONToolCalls(nil, nil),
+		Status:              "skipped",
+		LLM:                 llmIdentity,
+		TraceID:             traceID,
+		Message:             "No supported files changed.",
+		Comments:            []model.LlmComment{},
+		ToolCalls:           newJSONToolCalls(nil, nil),
+		ReviewRouterOutcome: managedOutcome,
 	}
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")

@@ -50,7 +50,7 @@ func NewOpenAIResponsesClient(cfg ClientConfig) *OpenAIResponsesClient {
 	sdkBaseURL := strings.TrimSuffix(strings.TrimRight(cfg.URL, "/"), "/responses")
 
 	httpClient := httpClientWithHeaderTimeout(cfg.Timeout)
-	retries := 5
+	retries := sdkMaxRetries(cfg)
 	if cfg.ChatGPTPlan {
 		retries = 0
 		httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -257,7 +257,10 @@ func (c *OpenAIResponsesClient) responsesStreamingInner(ctx context.Context, par
 	stream := c.sdk.Responses.NewStreaming(ctx, params, opts...)
 	defer stream.Close()
 
-	accumulator := responseStreamAccumulator{requireCompleted: c.cfg.ChatGPTPlan}
+	accumulator := responseStreamAccumulator{
+		requireCompleted: c.cfg.ChatGPTPlan || c.cfg.StrictTerminal,
+		chatGPTPlan:      c.cfg.ChatGPTPlan,
+	}
 	for stream.Next() {
 		if err := accumulator.add(stream.Current()); err != nil {
 			return nil, err
@@ -281,7 +284,10 @@ type responseStreamAccumulator struct {
 	outputBytes      int
 	terminal         *responses.Response
 	requireCompleted bool
-	terminalType     string
+	// chatGPTPlan marks ChatGPT-plan streams so failure messages can carry the
+	// ChatGPT usage-management URL; managed strict mode keeps generic messages.
+	chatGPTPlan  bool
+	terminalType string
 }
 
 func (a *responseStreamAccumulator) add(event responses.ResponseStreamEventUnion) error {
@@ -314,7 +320,9 @@ func (a *responseStreamAccumulator) add(event responses.ResponseStreamEventUnion
 			if len(envelope.Incomplete) > 0 && string(envelope.Incomplete) != "null" {
 				message += " " + string(envelope.Incomplete)
 			}
-			message += "; Manage usage: " + chatgptauth.UsageURL
+			if a.chatGPTPlan {
+				message += "; Manage usage: " + chatgptauth.UsageURL
+			}
 			return &responseStreamEventError{code: string(event.Response.Error.Code), param: envelope.Error.Param, message: message}
 		}
 		a.terminalType = event.Type
@@ -340,7 +348,11 @@ func (a *responseStreamAccumulator) response() (*responses.Response, error) {
 	}
 	if a.requireCompleted {
 		if a.terminalType != "response.completed" || a.terminal.Status != responses.ResponseStatusCompleted {
-			return nil, &responseStatusError{message: "chatgpt stream did not reach response.completed"}
+			message := "openai-responses stream did not reach response.completed"
+			if a.chatGPTPlan {
+				message = "chatgpt stream did not reach response.completed"
+			}
+			return nil, &responseStatusError{message: message}
 		}
 		if len(a.terminal.Output) > 0 {
 			return a.terminal, nil
@@ -369,6 +381,12 @@ func (a *responseStreamAccumulator) response() (*responses.Response, error) {
 	}
 	if err := checkResponseStatus(&full); err != nil {
 		return nil, err
+	}
+	// Strict terminal-completion (managed / ChatGPT): only a completed status is
+	// success — an incomplete stream must never degrade into an empty success.
+	if a.requireCompleted && full.Status != responses.ResponseStatusCompleted {
+		return nil, &responseStatusError{message: fmt.Sprintf(
+			"openai-responses stream did not reach response.completed: status=%s", full.Status)}
 	}
 	if full.Status != responses.ResponseStatusCompleted && full.Status != responses.ResponseStatusIncomplete {
 		return nil, &responseStatusError{message: fmt.Sprintf(

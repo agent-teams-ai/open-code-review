@@ -51,6 +51,7 @@ type reviewOptions struct {
 	effort                string
 	noFilter              bool
 	preview               bool
+	managed               bool
 }
 
 var reviewOpts reviewOptions
@@ -116,6 +117,12 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 	if err != nil {
 		return err
 	}
+	if opts.managed {
+		// Managed runs bound the serialized result (plan §7.3) and commit it
+		// atomically via the lazy file writer's temp+rename. reviewResultError
+		// still decides the exit code independently of the file.
+		out = &limitWriter{dst: out, limit: managedResultByteLimit}
+	}
 	closeOutPending := true
 	finishOutput := func() error {
 		if !closeOutPending {
@@ -134,7 +141,7 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 	}()
 
 	contentRef, _ := tool.ParseReviewMode(opts.from, opts.to, opts.commit).RefValue(opts.to, opts.commit)
-	cc, err := loadCommonContext(opts.repoDir, opts.rulePath, contentRef, opts.maxTools, opts.maxGitProcs, true)
+	cc, err := loadCommonContext(opts.repoDir, opts.rulePath, contentRef, opts.maxTools, opts.maxGitProcs, true, opts.managed)
 	if err != nil {
 		return err
 	}
@@ -164,6 +171,7 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 		Provider: opts.provider,
 		Model:    opts.model,
 		Context:  ctx,
+		Managed:  opts.managed,
 	})
 	if err != nil {
 		return err
@@ -241,6 +249,7 @@ func executeReviewContext(ctx context.Context, opts reviewOptions) (retErr error
 		MaxTokensBudget:       int64(opts.maxTokensBudget),
 		SkipFilter:            opts.noFilter,
 		RuntimeConfig:         rt.RuntimeConfig,
+		Managed:               opts.managed,
 	})
 
 	closeRaw := bindRawWriter(rt.RawHolder, cc.RepoDir, ag.Session())

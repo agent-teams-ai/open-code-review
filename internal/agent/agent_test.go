@@ -238,10 +238,12 @@ func TestParseFilterResponse(t *testing.T) {
 
 func TestParseFilterToolCalls(t *testing.T) {
 	tests := []struct {
-		name    string
-		calls   []llm.ToolCall
-		total   int
-		wantSet map[int]struct{}
+		name          string
+		calls         []llm.ToolCall
+		total         int
+		wantSet       map[int]struct{}
+		wantDecision  bool
+		wantMalformed bool
 	}{
 		{
 			name:    "no tool calls",
@@ -257,8 +259,9 @@ func TestParseFilterToolCalls(t *testing.T) {
 					Arguments: `{"comment_ids": ["c-0", "c-2"]}`,
 				},
 			}},
-			total:   5,
-			wantSet: map[int]struct{}{0: {}, 2: {}},
+			total:        5,
+			wantSet:      map[int]struct{}{0: {}, 2: {}},
+			wantDecision: true,
 		},
 		{
 			name: "approve_all_comments returns empty map",
@@ -268,8 +271,9 @@ func TestParseFilterToolCalls(t *testing.T) {
 					Arguments: `{}`,
 				},
 			}},
-			total:   5,
-			wantSet: map[int]struct{}{},
+			total:        5,
+			wantSet:      map[int]struct{}{},
+			wantDecision: true,
 		},
 		{
 			name: "ignores non-matching tool names",
@@ -290,8 +294,9 @@ func TestParseFilterToolCalls(t *testing.T) {
 					Arguments: `{"comment_ids": ["c-0", "c-10"]}`,
 				},
 			}},
-			total:   5,
-			wantSet: map[int]struct{}{0: {}},
+			total:        5,
+			wantSet:      map[int]struct{}{0: {}},
+			wantDecision: true,
 		},
 		{
 			name: "invalid JSON arguments falls through",
@@ -301,13 +306,20 @@ func TestParseFilterToolCalls(t *testing.T) {
 					Arguments: `not json`,
 				},
 			}},
-			total:   5,
-			wantSet: nil,
+			total:         5,
+			wantSet:       nil,
+			wantMalformed: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseFilterToolCalls(tt.calls, tt.total)
+			got, decision, malformed := parseFilterToolCalls(tt.calls, tt.total)
+			if decision != tt.wantDecision {
+				t.Errorf("decision = %v, want %v", decision, tt.wantDecision)
+			}
+			if malformed != tt.wantMalformed {
+				t.Errorf("malformed = %v, want %v", malformed, tt.wantMalformed)
+			}
 			if tt.wantSet == nil {
 				if got != nil {
 					t.Errorf("expected nil, got %v", got)

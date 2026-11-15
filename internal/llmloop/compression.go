@@ -221,12 +221,18 @@ func copyMessages(msgs []llm.Message) []llm.Message {
 // intact. Returns rebuilt as [frozen] + [compressed_summary appended to
 // the user prompt] + [active].
 func (r *Runner) runCompression(ctx context.Context, msgs []llm.Message, taskKey string) ([]llm.Message, error) {
-	if len(r.deps.Template.MemoryCompressionTask.Messages) == 0 || len(msgs) <= 2 {
+	if len(r.deps.Template.MemoryCompressionTask.Messages) == 0 {
+		r.recordPhase(taskKey, PhaseCompression, PhaseNotApplicable, "disabled")
+		return msgs[:min(len(msgs), 2)], nil
+	}
+	if len(msgs) <= 2 {
+		r.recordPhase(taskKey, PhaseCompression, PhaseNotApplicable, "no_zone")
 		return msgs[:min(len(msgs), 2)], nil
 	}
 
 	part := partitionMessages(msgs, r.deps.Template.MaxTokens, 0)
 	if part.compressEnd <= part.frozenEnd {
+		r.recordPhase(taskKey, PhaseCompression, PhaseNotApplicable, "no_zone")
 		return msgs, nil
 	}
 
@@ -261,6 +267,11 @@ func (r *Runner) runCompression(ctx context.Context, msgs []llm.Message, taskKey
 
 	if err != nil {
 		rec.SetError(err, duration)
+		reason := "error"
+		if ctx.Err() != nil {
+			reason = "cancelled"
+		}
+		r.recordPhase(taskKey, PhaseCompression, PhaseFailed, reason)
 		// Return msgs unchanged: truncating to frozenEnd would discard all
 		// conversation context, which is worse than staying over the token
 		// limit temporarily.
@@ -278,6 +289,7 @@ func (r *Runner) runCompression(ctx context.Context, msgs []llm.Message, taskKey
 	if rawSummary == "" {
 		// Empty summary: keep the original conversation rather than dropping
 		// everything below the frozen zone.
+		r.recordPhase(taskKey, PhaseCompression, PhaseCompleted, "")
 		return msgs, nil
 	}
 
@@ -292,6 +304,7 @@ func (r *Runner) runCompression(ctx context.Context, msgs []llm.Message, taskKey
 		rebuilt = append(rebuilt, msgs[i])
 	}
 
+	r.recordPhase(taskKey, PhaseCompression, PhaseCompleted, "")
 	return rebuilt, nil
 }
 

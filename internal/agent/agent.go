@@ -164,6 +164,12 @@ type Args struct {
 	// LLM endpoint and app config; a zero value simply omits those fields from
 	// the hash input.
 	RuntimeConfig RuntimeConfig
+
+	// Managed marks the Review Router managed mode (plan §5.1–§7.4). It
+	// activates the outcome recorder behind the single reviewrouter_outcome
+	// JSON field and the managed scheduling/transort contract. Unmanaged runs
+	// leave it false and are unaffected.
+	Managed bool
 }
 
 // RuntimeConfig captures the allowlisted, non-secret runtime settings that
@@ -202,6 +208,11 @@ type Agent struct {
 	// and consumed by finalizeManifest to fill the manifest input/repository.
 	inputResolution    diff.InputResolution
 	repoRemoteIdentity string
+
+	// outcomes accumulates the managed outcome contract's facts (plan §7.3–7.4)
+	// and is frozen once at run end. Nil for unmanaged runs; every recorder
+	// method is nil-safe.
+	outcomes *managedRecorder
 }
 
 // ResumeInfo summarizes file-level reuse for a resumed review.
@@ -235,6 +246,9 @@ func New(args Args) *Agent {
 		args:    args,
 		session: args.Session,
 	}
+	if args.Managed {
+		a.outcomes = newManagedRecorder()
+	}
 	a.initManifest()
 	// DiffLookup closure captures a so the runner can resolve per-file
 	// model.Diff records lazily (a.diffs is only populated by loadDiffs,
@@ -254,6 +268,8 @@ func New(args Args) *Agent {
 		// stay out of the retry report. See newRequestMeta.
 		NewRequestMeta:  a.newRequestMeta,
 		MaxTokensBudget: args.MaxTokensBudget,
+		Managed:         args.Managed,
+		PhaseRecorder:   a.outcomes,
 	})
 	return a
 }
@@ -282,6 +298,12 @@ func (a *Agent) newRequestMeta(filePath string, taskType session.TaskType, reque
 
 // Run executes the full review pipeline: parse diffs -> group -> plan per group -> LLM tool-loop -> collect comments.
 func (a *Agent) Run(ctx context.Context) ([]model.LlmComment, error) {
+	// Freeze the managed outcome exactly once at run exit (plan §7.4): by the
+	// time any return path gets here, every group, comment and compression
+	// worker has been joined (or never started), so the frozen record can
+	// never change after capture.
+	defer a.outcomes.freeze()
+
 	// Base prompt-cache affinity key for any LLM request in this run that a task doesn't re-scope.
 	// Each task conversation (plan, per-group main loop, compression, ...) refines it with llm.SessionTaskKey where it starts,
 	// so affinity keys stay per-conversation, the granularity provider prompt caches actually reuse prefixes at.
@@ -291,6 +313,9 @@ func (a *Agent) Run(ctx context.Context) ([]model.LlmComment, error) {
 	ctx, diffSpan := telemetry.StartSpan(ctx, "diff.parse")
 	if err := a.loadDiffs(ctx); err != nil {
 		diffSpan.End()
+		// The run stopped before any group existed; the outcome names the cause
+		// and carries no groups (plan §7.4 rule 2).
+		a.outcomes.setRunStop(ManagedStopInputError)
 		// The builder already exists (agent.New created session + manifest), but
 		// no item was selected yet. Record the run-level input failure at this
 		// trigger point, then finalize and persist so the run still emits a
@@ -445,6 +470,17 @@ func (a *Agent) Run(ctx context.Context) ([]model.LlmComment, error) {
 // Session returns the session history associated with this Agent.
 func (a *Agent) Session() *session.SessionHistory {
 	return a.session
+}
+
+// ManagedOutcome returns the frozen managed outcome record (plan §7.4), or
+// nil when this run is unmanaged. The record is frozen at run exit; the lazy
+// freeze here is a defensive fallback that cannot observe unfinalized workers,
+// because Agent.Run has returned by the time any caller reads it.
+func (a *Agent) ManagedOutcome() *ManagedOutcome {
+	if a.outcomes == nil {
+		return nil
+	}
+	return a.outcomes.freeze()
 }
 
 // SessionID returns the current review's resumable session ID. It returns an
@@ -665,6 +701,26 @@ func (a *Agent) dispatchSubtasks(ctx context.Context) ([]model.LlmComment, error
 	if groupResult.usage != nil {
 		a.runner.RecordUsage(groupResult.usage)
 	}
+	a.outcomes.setGrouping(groupResult.state, groupResult.reason)
+
+	// Every planned group is recorded before dispatch, so groups the budget
+	// never starts are still part of the outcome (plan §7.4 rule 2).
+	maxRounds := a.args.Template.ReviewRounds()
+	for _, g := range groups {
+		paths := make([]string, 0, len(g.Diffs))
+		for _, d := range g.Diffs {
+			paths = append(paths, d.NewPath)
+		}
+		a.outcomes.registerGroup(fileGroupKey(g.Diffs), paths, maxRounds)
+	}
+	if a.resumeInfo == nil {
+		// Without resume the group/path set must equal the native selected set.
+		selected := make([]string, 0, len(nonDeleted))
+		for _, d := range nonDeleted {
+			selected = append(selected, d.NewPath)
+		}
+		a.outcomes.expectPaths(selected)
+	}
 
 	var wg sync.WaitGroup
 
@@ -712,6 +768,12 @@ dispatchLoop:
 						a.recordWarning("manifest_error", "", err.Error())
 					}
 				}
+				if a.outcomes != nil {
+					for _, rest := range groups[gi:] {
+						a.outcomes.markNotDispatched(fileGroupKey(rest.Diffs), ManagedStopTokenBudget)
+					}
+					a.outcomes.setRunStop(ManagedStopTokenBudget)
+				}
 				break
 			}
 		}
@@ -719,10 +781,24 @@ dispatchLoop:
 		select {
 		case sem <- struct{}{}: // acquire semaphore
 		case <-ctx.Done():
+			if a.outcomes != nil {
+				stopCause := managedErrorStopCause(ctx.Err())
+				for _, rest := range groups[gi:] {
+					a.outcomes.markNotDispatched(fileGroupKey(rest.Diffs), stopCause)
+				}
+				a.outcomes.setRunStop(stopCause)
+			}
 			break dispatchLoop
 		}
 		if ctx.Err() != nil {
 			<-sem // release the slot acquired concurrently with cancellation
+			if a.outcomes != nil {
+				stopCause := managedErrorStopCause(ctx.Err())
+				for _, rest := range groups[gi:] {
+					a.outcomes.markNotDispatched(fileGroupKey(rest.Diffs), stopCause)
+				}
+				a.outcomes.setRunStop(stopCause)
+			}
 			break dispatchLoop
 		}
 		dispatched += int64(len(group.Diffs))
@@ -746,6 +822,7 @@ dispatchLoop:
 					telemetry.ErrorEvent(ctx, "subtask.panic", fmt.Errorf("panic: %v", r),
 						telemetry.AnyToAttr("group.label", g.Label))
 					a.recordWarning("subtask_error", g.Label, fmt.Sprintf("panic: %v", r))
+					a.outcomes.latchStop(fileGroupKey(g.Diffs), ManagedStopInternalError)
 				}
 			}()
 
@@ -827,6 +904,7 @@ dispatchLoop:
 		a.args.CommentWorkerPool.Await()
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
+		a.outcomes.setRunStop(managedErrorStopCause(ctxErr))
 		a.recordContextFailure(ctxErr)
 		return a.args.CommentCollector.Comments(), ctxErr
 	}
@@ -1388,6 +1466,7 @@ func (a *Agent) executeGroupSubtask(ctx context.Context, g FileGroup) (bool, *su
 	telemetry.SetAttr(span, "lines.changed.max_file", maxFileChanged)
 
 	if ctx.Err() != nil {
+		a.outcomes.latchStop(groupKey, managedErrorStopCause(ctx.Err()))
 		return false, nil, ctx.Err()
 	}
 
@@ -1408,6 +1487,7 @@ func (a *Agent) executeGroupSubtask(ctx context.Context, g FileGroup) (bool, *su
 	switch {
 	case !planEnabled:
 		// No plan task configured.
+		a.outcomes.recordPhase(groupKey, phasePlan, managedStateNotApplicable, reasonDisabled)
 	case planRequired:
 		var err error
 		planResult, err = a.executeGroupPlanPhase(ctx, g, concatenatedDiffs, changeFilesExcludingGroup, rule)
@@ -1416,8 +1496,16 @@ func (a *Agent) executeGroupSubtask(ctx context.Context, g FileGroup) (bool, *su
 			telemetry.Eventf(ctx, "plan.failed", err.Error(),
 				telemetry.AnyToAttr("group.label", groupKey))
 			planResult = ""
+			reason := reasonError
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				reason = reasonCancelled
+			}
+			a.outcomes.recordPhase(groupKey, phasePlan, managedStateFailed, reason)
+		} else {
+			a.outcomes.recordPhase(groupKey, phasePlan, managedStateCompleted, "")
 		}
 	default:
+		a.outcomes.recordPhase(groupKey, phasePlan, managedStateNotApplicable, reasonThreshold)
 		fmt.Fprintf(stdout.Writer(), "[ocr] Skipping plan phase for group %q (%d file(s), max %d lines, total %d lines)\n",
 			groupKey, len(g.Diffs), maxFileChanged, totalChanged)
 		telemetry.Event(ctx, "plan.skipped",
@@ -1431,6 +1519,7 @@ func (a *Agent) executeGroupSubtask(ctx context.Context, g FileGroup) (bool, *su
 
 	// Phase 2: Main task loop (multi-round)
 	if len(a.args.Template.MainTask.Messages) == 0 {
+		a.outcomes.latchStop(groupKey, ManagedStopInputError)
 		return false, nil, errMainTaskEmpty
 	}
 
@@ -1450,6 +1539,7 @@ func (a *Agent) executeGroupSubtask(ctx context.Context, g FileGroup) (bool, *su
 
 	for round := 1; round <= maxRounds; round++ {
 		if ctx.Err() != nil {
+			a.outcomes.latchStop(groupKey, managedErrorStopCause(ctx.Err()))
 			return false, nil, ctx.Err()
 		}
 
@@ -1461,8 +1551,15 @@ func (a *Agent) executeGroupSubtask(ctx context.Context, g FileGroup) (bool, *su
 				a.recordWarning("token_budget_reached", g.Diffs[0].NewPath,
 					fmt.Sprintf("skipped round %d of group %q: used %d tokens exceeds budget %d", round, groupKey, a.runner.TotalTokensUsed(), a.args.MaxTokensBudget))
 			}
+			// Latched at its trigger point before the break: a later clean round
+			// must not erase the budget stop (plan §7.3).
+			a.outcomes.latchStop(groupKey, ManagedStopTokenBudget)
 			break
 		}
+
+		// The round counts as started before its preparation begins (plan §7.4
+		// rule 3), so a prompt-budget overflow during preparation still counts.
+		a.outcomes.roundStarted(groupKey)
 
 		// Round 2+ strips the plan to avoid it acting as a coverage ceiling.
 		roundPlan := planResult
@@ -1474,6 +1571,10 @@ func (a *Agent) executeGroupSubtask(ctx context.Context, g FileGroup) (bool, *su
 		messages := a.buildMainTaskMessages(rule, changeFilesExcludingGroup, concatenatedDiffs, roundPlan, confirmedText)
 
 		if stop := a.checkPromptBudget(ctx, messages, groupKey, round); stop != nil {
+			// Latched before either exit path: a round-1 overflow stops the group
+			// with prompt_budget, a later one truncates an already-completed
+			// group's story the same way (plan §7.3).
+			a.outcomes.latchStop(groupKey, ManagedStopPromptBudget)
 			if round == 1 {
 				return false, stop, nil
 			}
@@ -1495,6 +1596,7 @@ func (a *Agent) executeGroupSubtask(ctx context.Context, g FileGroup) (bool, *su
 		}()
 
 		if err != nil {
+			a.outcomes.latchStop(groupKey, managedErrorStopCause(err))
 			if round == 1 {
 				return false, nil, err
 			}
@@ -1519,6 +1621,19 @@ func (a *Agent) executeGroupSubtask(ctx context.Context, g FileGroup) (bool, *su
 			baseline[d.NewPath] = len(all)
 		}
 		confirmed = append(confirmed, newlyConfirmed...)
+
+		// Managed rounds (plan §7.4 rule 3): a round is completed only after its
+		// main task_done was confirmed. A task_done carried by the budget grace
+		// round confirms the round but keeps the spent limit latched — complete
+		// investigation is not promised after review_limit_reached (plan §7.3).
+		if mainCompleted {
+			a.outcomes.roundCompleted(groupKey)
+		} else {
+			a.outcomes.latchStop(groupKey, managedMainLoopStopCause(mainStop))
+		}
+		if mainStop == llmloop.StopMaxRounds || mainStop == llmloop.StopTokenBudget {
+			a.outcomes.latchStop(groupKey, managedMainLoopStopCause(mainStop))
+		}
 
 		if !mainCompleted {
 			if mainStop == llmloop.StopTokenBudget {
@@ -1803,12 +1918,14 @@ func (a *Agent) executeGroupReviewFilter(ctx context.Context, g FileGroup, from 
 
 	ft := a.args.Template.ReviewFilterTask
 	if ft == nil || len(ft.Messages) == 0 {
+		a.outcomes.recordPhase(groupKey, phaseFilter, managedStateNotApplicable, reasonDisabled)
 		return
 	}
 
 	if a.args.SkipFilter {
 		telemetry.SetAttr(span, "skipped", true)
 		fmt.Fprintf(stdout.Writer(), "[ocr] Review filter skipped for group %q (--no-filter)\n", groupKey)
+		a.outcomes.recordPhase(groupKey, phaseFilter, managedStateNotApplicable, reasonDisabled)
 		return
 	}
 
@@ -1832,6 +1949,7 @@ func (a *Agent) executeGroupReviewFilter(ctx context.Context, g FileGroup, from 
 		}
 	}
 	if len(candidates) == 0 {
+		a.outcomes.recordPhase(groupKey, phaseFilter, managedStateNotApplicable, reasonNoCandidates)
 		return
 	}
 	telemetry.SetAttr(span, "comments.before", len(candidates))
@@ -1875,6 +1993,11 @@ func (a *Agent) executeGroupReviewFilter(ctx context.Context, g FileGroup, from 
 		fmt.Fprintf(stdout.Writer(), "[ocr] Review filter failed for group %q: %v\n", groupKey, err)
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
+		reason := reasonError
+		if reqCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			reason = reasonCancelled
+		}
+		a.outcomes.recordPhase(groupKey, phaseFilter, managedStateFailed, reason)
 		return
 	}
 	var totalTokens int64
@@ -1886,9 +2009,22 @@ func (a *Agent) executeGroupReviewFilter(ctx context.Context, g FileGroup, from 
 	rec.SetResponse(resp, duration)
 	a.runner.RecordUsage(resp.Usage)
 
-	indices := parseFilterToolCalls(resp.ToolCalls(), len(candidates))
-	if indices == nil {
-		indices = parseFilterResponse(resp.Content(), len(candidates))
+	// Managed outcome verdict (plan §7.3): only a successfully parsed decision
+	// proves the filter's work; HTTP success and an empty removal set reached by
+	// fallback text parsing never do. The native removal behavior is unchanged.
+	indices, verdict := classifyFilterResponse(resp.ToolCalls(), resp.Content(), len(candidates))
+	switch {
+	case verdict.parsed:
+		a.outcomes.recordPhase(groupKey, phaseFilter, managedStateCompleted, "")
+		a.outcomes.recordFilterDecision(groupKey, true)
+	case verdict.malformed:
+		// Degradation with preserved comments; filter_decision_valid latches false.
+		a.outcomes.recordPhase(groupKey, phaseFilter, managedStateFailed, reasonMalformed)
+		a.outcomes.recordFilterDecision(groupKey, false)
+	default:
+		// No decision material arrived at all: the phase fails without a parsed
+		// decision, so filter_decision_valid stays null (plan §7.4 rule 5).
+		a.outcomes.recordPhase(groupKey, phaseFilter, managedStateFailed, reasonMalformed)
 	}
 	telemetry.SetAttr(span, "comments.filtered", len(indices))
 	if len(indices) == 0 {
@@ -1946,22 +2082,33 @@ func buildGroupFilterCommentsJSON(comments []model.LlmComment) string {
 // parseFilterToolCalls extracts comment indices from the filter tool call response.
 // Returns nil if no matching tool call is found, allowing fallback to text-based parsing.
 // Returns an empty map (non-nil) for approve_all_comments or an empty comment_ids list.
-func parseFilterToolCalls(calls []llm.ToolCall, total int) map[int]struct{} {
+//
+// The second result reports that a recognized filter decision arrived; the
+// third that some recognized decision was malformed (unparseable tool
+// arguments). Malformed arguments keep their native behavior — the call is
+// skipped and the text parser runs as fallback — the verdicts only feed the
+// managed outcome contract (plan §7.3).
+func parseFilterToolCalls(calls []llm.ToolCall, total int) (map[int]struct{}, bool, bool) {
 	var indices map[int]struct{}
+	decision := false
+	malformed := false
 	for _, call := range calls {
 		switch call.Function.Name {
 		case "approve_all_comments":
 			if indices == nil {
 				indices = make(map[int]struct{})
 			}
+			decision = true
 		case "report_incorrect_comments":
 			var args struct {
 				CommentIDs []string `json:"comment_ids"`
 			}
 			if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 				fmt.Fprintf(stdout.Writer(), "[ocr] Review filter: failed to parse tool call arguments: %v\n", err)
+				malformed = true
 				continue
 			}
+			decision = true
 			if indices == nil {
 				indices = make(map[int]struct{})
 			}
@@ -1973,7 +2120,7 @@ func parseFilterToolCalls(calls []llm.ToolCall, total int) map[int]struct{} {
 			}
 		}
 	}
-	return indices
+	return indices, decision, malformed
 }
 
 // parseFilterResponse extracts comment indices from the LLM filter response.

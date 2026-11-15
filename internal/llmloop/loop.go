@@ -72,6 +72,55 @@ type Deps struct {
 	// unlimited, which is also what scan and every existing caller get by
 	// default.
 	MaxTokensBudget int64
+
+	// Managed marks the Review Router managed mode (plan §5.1–§7.2): memory
+	// compression runs synchronously at the soft threshold and async comment
+	// workers get a bounded worker context. False (the zero value) keeps the
+	// unmanaged scheduling bit-for-bit unchanged.
+	Managed bool
+
+	// PhaseRecorder receives the managed outcome contract's optional-phase
+	// facts that only this loop can observe (compression and relocation phase
+	// outcomes; plan §7.3–7.4). Nil in unmanaged runs.
+	PhaseRecorder ManagedPhaseRecorder
+}
+
+// ManagedPhase names an optional result-changing phase of the managed outcome
+// contract that runs inside the LLM loop.
+type ManagedPhase string
+
+const (
+	// PhaseCompression is the memory-compression phase.
+	PhaseCompression ManagedPhase = "compression"
+	// PhaseRelocation is the per-comment re-location phase.
+	PhaseRelocation ManagedPhase = "relocation"
+)
+
+// ManagedPhaseState is the closed phase-state enum of the managed outcome
+// contract (plan §7.4 rule 1).
+type ManagedPhaseState string
+
+const (
+	PhaseCompleted     ManagedPhaseState = "completed"
+	PhaseNotApplicable ManagedPhaseState = "not_applicable"
+	PhaseFailed        ManagedPhaseState = "failed"
+	PhaseCancelled     ManagedPhaseState = "cancelled"
+)
+
+// ManagedPhaseRecorder is the narrow sink the agent-side managed outcome
+// recorder implements for loop-owned phase facts. taskKey is the subtask
+// (group) key the phase ran under. reason is a short allowlisted code or "".
+// Implementations must be safe for concurrent use.
+type ManagedPhaseRecorder interface {
+	RecordPhaseOutcome(taskKey string, phase ManagedPhase, state ManagedPhaseState, reason string)
+}
+
+// recordPhase forwards a phase outcome to the managed recorder; no-op when
+// unmanaged (nil recorder).
+func (r *Runner) recordPhase(taskKey string, phase ManagedPhase, state ManagedPhaseState, reason string) {
+	if r.deps.PhaseRecorder != nil {
+		r.deps.PhaseRecorder.RecordPhaseOutcome(taskKey, phase, state, reason)
+	}
 }
 
 // requestCtx returns ctx carrying the identity of one logical LLM request, or
@@ -798,6 +847,7 @@ func (r *Runner) executeToolCall(ctx context.Context, taskKey string, call llm.T
 							_, resp := diff.ReLocateComment(reqCtx, cm, d, r.deps.LLMClient, msgs, r.deps.Model, r.deps.Template.CompletionTokenLimit())
 							if resp != nil {
 								rlRec.SetResponse(resp, time.Since(rlStart))
+								r.recordPhase(taskKey, PhaseRelocation, PhaseCompleted, "")
 								if resp.Usage != nil {
 									atomic.AddInt64(&r.totalInputTokens, resp.Usage.PromptTokens)
 									atomic.AddInt64(&r.totalOutputTokens, resp.Usage.CompletionTokens)
@@ -806,6 +856,11 @@ func (r *Runner) executeToolCall(ctx context.Context, taskKey string, call llm.T
 								}
 							} else {
 								rlRec.SetError(fmt.Errorf("re-location LLM call failed"), time.Since(rlStart))
+								reason := "error"
+								if reqCtx.Err() != nil {
+									reason = "cancelled"
+								}
+								r.recordPhase(taskKey, PhaseRelocation, PhaseFailed, reason)
 							}
 						}
 					}
@@ -820,8 +875,21 @@ func (r *Runner) executeToolCall(ctx context.Context, taskKey string, call llm.T
 			}
 			pool := r.deps.CommentWorkerPool
 			asyncCtx := context.WithoutCancel(ctx)
+			var cancelAsync context.CancelFunc
+			if r.deps.Managed {
+				// Managed (plan §7.2): the worker gets the original bounded
+				// group context instead of a fully detached one — it keeps the
+				// group context's values but its own lifetime (cancelled when
+				// the worker completes). Root cancellation is enforced by the
+				// run-wide client wrapper, so a cancelled run can neither hold
+				// the serialization permit nor start a later model call.
+				asyncCtx, cancelAsync = context.WithCancel(context.WithoutCancel(ctx))
+			}
 			toolName := t.Name()
 			pool.SubmitFor(taskKey, func() ([]model.LlmComment, error) {
+				if cancelAsync != nil {
+					defer cancelAsync()
+				}
 				defer func() {
 					dur := time.Since(startTime)
 					telemetry.RecordToolResult(toolSpan, toolName, dur.Milliseconds(), nil)
@@ -921,7 +989,22 @@ func (r *Runner) addNextMessage(ctx context.Context, assistantContent string, to
 	// a job is never started and then immediately cancelled by the same
 	// call (#384), and never started when we are about to return false.
 	if finalCount > softLimit && finalCount < warnLimit {
-		r.triggerAsyncCompression(ctx, st, *messages, taskKey)
+		if r.deps.Managed {
+			// Managed (plan §7.2): compression runs synchronously at the
+			// existing soft-threshold point with the same runCompression /
+			// partition algorithm. The async variant is skipped because the
+			// deferred cancelPendingCompression after task_done would cancel a
+			// still-streaming compression request and brick the RR transport
+			// for later calls (filter). Hard-threshold sync fallback above is
+			// kept as-is.
+			var err error
+			if *messages, err = r.runCompression(ctx, *messages, taskKey); err != nil {
+				fmt.Fprintf(stdout.Writer(), "[ocr] Memory compression failed: %v\n", err)
+			}
+			finalCount = CountMessagesTokens(*messages)
+		} else {
+			r.triggerAsyncCompression(ctx, st, *messages, taskKey)
+		}
 	}
 
 	return finalCount < warnLimit

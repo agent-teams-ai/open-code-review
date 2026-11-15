@@ -49,9 +49,13 @@ type groupingResponse struct {
 }
 
 // groupDiffsResult holds the grouping output and any LLM usage to record.
+// state/reason describe how the partition was decided, for the managed outcome
+// (plan §7.4 grouping).
 type groupDiffsResult struct {
 	groups []FileGroup
 	usage  *llm.UsageInfo
+	state  string
+	reason string
 }
 
 // groupingSessionOpts carries optional session-recording context.
@@ -81,7 +85,11 @@ func groupDiffs(ctx context.Context, diffs []model.Diff, client llm.LLMClient, m
 			totalChanged, _ := diffsChurn(diffs)
 			emitGroupingSkipped(ctx, template.GroupingPerFile, len(diffs), totalChanged, tpl)
 		}
-		return groupDiffsResult{groups: toSingleFileGroups(diffs)}
+		state, reason := managedStateNotApplicable, reasonSingleFile
+		if len(diffs) == 0 {
+			reason = reasonNoSelection
+		}
+		return groupDiffsResult{groups: toSingleFileGroups(diffs), state: state, reason: reason}
 	}
 
 	// A small change set decides its partition without an LLM round trip: too
@@ -90,21 +98,26 @@ func groupDiffs(ctx context.Context, diffs []model.Diff, client llm.LLMClient, m
 	// Template.GroupingPlan.
 	totalChanged, _ := diffsChurn(diffs)
 	if strategy := tpl.GroupingPlan(len(diffs), totalChanged); strategy != template.GroupingViaLLM {
-		return groupDiffsResult{groups: groupWithoutLLM(ctx, diffs, strategy, tpl, totalChanged, tokenLimit)}
+		return groupDiffsResult{groups: groupWithoutLLM(ctx, diffs, strategy, tpl, totalChanged, tokenLimit),
+			state: managedStateNotApplicable, reason: reasonThreshold}
 	}
 
 	if tpl.GroupingTask == nil || len(tpl.GroupingTask.Messages) == 0 {
-		return groupDiffsResult{groups: toSingleFileGroups(diffs)}
+		return groupDiffsResult{groups: toSingleFileGroups(diffs),
+			state: managedStateNotApplicable, reason: reasonDisabled}
 	}
 
 	groups, usage, err := callGroupingLLM(ctx, diffs, client, modelName, tpl.GroupingTask, tpl.CompletionTokenLimit(), sessOpts)
 	if err != nil {
 		fmt.Fprintf(stdout.Writer(), "[ocr] LLM grouping failed (%v), falling back to per-file dispatch\n", err)
-		return groupDiffsResult{groups: toSingleFileGroups(diffs), usage: usage}
+		// The fallback partition works, but the grouping itself failed: the
+		// managed outcome must read failed, never completed (plan §7.4 rule 1).
+		return groupDiffsResult{groups: toSingleFileGroups(diffs), usage: usage,
+			state: managedStateFailed, reason: reasonFallback}
 	}
 
 	groups = enforceGroupTokenBudget(groups, tokenLimit)
-	return groupDiffsResult{groups: groups, usage: usage}
+	return groupDiffsResult{groups: groups, usage: usage, state: managedStateCompleted}
 }
 
 // groupWithoutLLM partitions a below-threshold change set locally, in the shape

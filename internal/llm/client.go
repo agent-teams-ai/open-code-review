@@ -410,6 +410,17 @@ type ClientConfig struct {
 	RejectsSamplingParams bool
 	ChatGPTPlan           bool
 	ChatGPTAccount        string
+
+	// StrictTerminal is the independent strict terminal-completion check for
+	// streaming Responses calls (only response.completed + completed status is
+	// success). Independent from ChatGPTPlan so managed mode can enforce it
+	// without adopting any ChatGPT OAuth semantics.
+	StrictTerminal bool
+
+	// MaxRetries optionally overrides the SDK retry count: nil keeps the
+	// upstream default, an explicit 0 disables SDK retries. See
+	// ResolvedEndpoint.MaxRetries.
+	MaxRetries *int
 	// SessionKey is the fallback prompt-cache affinity key
 	// for requests whose context carries none (see ContextWithSessionKey).
 	//
@@ -468,6 +479,16 @@ func retryCodesMiddleware(codes []int) func(*http.Request, func(*http.Request) (
 
 // --- Factory ---
 
+// sdkMaxRetries resolves the effective SDK retry count from cfg.MaxRetries:
+// nil keeps the upstream default of 5, an explicit value (including 0) is used
+// as-is so managed mode can disable SDK retries entirely.
+func sdkMaxRetries(cfg ClientConfig) int {
+	if cfg.MaxRetries != nil {
+		return *cfg.MaxRetries
+	}
+	return 5
+}
+
 // NewLLMClient creates the appropriate client based on the resolved endpoint protocol.
 // protocol dispatch (canonical names from protocol.go):
 //   - ProtocolAnthropic ("anthropic") -> AnthropicClient
@@ -497,6 +518,8 @@ func NewLLMClient(ep ResolvedEndpoint, collector *RetryCollector, raw *RawHolder
 		RejectsSamplingParams: ep.RejectsSamplingParams,
 		ChatGPTPlan:           ep.ChatGPTPlan,
 		ChatGPTAccount:        ep.ChatGPTAccount,
+		StrictTerminal:        ep.StrictTerminal,
+		MaxRetries:            ep.MaxRetries,
 		retryCollector:        collector,
 		rawHolder:             raw,
 		AWSProfile:            ep.AWSProfile,
@@ -608,7 +631,7 @@ func NewOpenAIClient(cfg ClientConfig) *OpenAIClient {
 	opts := []openaiopt.RequestOption{
 		openaiopt.WithAPIKey(cfg.APIKey),
 		openaiopt.WithBaseURL(sdkBaseURL),
-		openaiopt.WithMaxRetries(5),
+		openaiopt.WithMaxRetries(sdkMaxRetries(cfg)),
 		openaiopt.WithHeader("User-Agent", userAgent("")),
 		openaiopt.WithRequestTimeout(cfg.Timeout),
 		openaiopt.WithHTTPClient(httpClientWithHeaderTimeout(cfg.Timeout)),
@@ -1181,7 +1204,7 @@ func NewAnthropicClient(cfg ClientConfig) *AnthropicClient {
 
 	opts := []option.RequestOption{
 		option.WithBaseURL(sdkBaseURL),
-		option.WithMaxRetries(5),
+		option.WithMaxRetries(sdkMaxRetries(cfg)),
 		option.WithHeader("User-Agent", userAgent("claude")),
 		option.WithRequestTimeout(cfg.Timeout),
 		// anthropic-sdk-go's default client hardcodes the same 10-minute
@@ -1246,7 +1269,7 @@ func NewAnthropicBedrockClient(cfg ClientConfig) *AnthropicClient {
 	// would be overwritten rather than honoured. A custom endpoint (a VPC
 	// endpoint, say) would need to be threaded through the AWS config instead.
 	opts := []option.RequestOption{
-		option.WithMaxRetries(5),
+		option.WithMaxRetries(sdkMaxRetries(cfg)),
 		option.WithHeader("User-Agent", userAgent("claude")),
 		option.WithRequestTimeout(cfg.Timeout),
 		// No httpClientWithHeaderTimeout here (unlike NewAnthropicClient): bedrock.WithConfig

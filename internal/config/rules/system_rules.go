@@ -283,6 +283,14 @@ type ResolverOptions struct {
 	// Runner bounds concurrent git subprocesses. Optional; when nil the
 	// resolver shells out to git directly.
 	Runner *gitcmd.Runner
+
+	// SkipProjectRules suppresses the project-local .opencodereview/rule.json
+	// layer entirely. Default (false) preserves upstream behavior; the managed
+	// review mode sets it to true before any rules are loaded so a rule.json
+	// shipped inside the reviewed repository can neither change nor break
+	// trusted rule loading. Custom (--rule), global and system layers are
+	// unaffected.
+	SkipProjectRules bool
 }
 
 // NewResolver builds a Resolver with the following priority:
@@ -317,7 +325,7 @@ func NewResolver(repoDir, customRulePath string, opts ResolverOptions) (Resolver
 	}
 
 	var projectRule *ProjectRule
-	if repoDir != "" {
+	if repoDir != "" && !opts.SkipProjectRules {
 		pr, err := loadProjectRule(repoDir)
 		if err != nil {
 			return nil, nil, err
