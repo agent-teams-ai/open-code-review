@@ -8,23 +8,7 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
-MIN_YEAR=2026
-SPDX_REGEX="SPDX-License-Identifier: Apache-2.0"
-COPYRIGHT_REGEX="Copyright [0-9]{4} alibaba/open-code-review Contributors"
-
-SLASH_HEADER='// SPDX-License-Identifier: Apache-2.0
-// Copyright 2026 alibaba/open-code-review Contributors'
-
-HASH_HEADER='# SPDX-License-Identifier: Apache-2.0
-# Copyright 2026 alibaba/open-code-review Contributors'
-
-# CSS has no // line comment — that is SCSS — so a block is the only option. The
-# lines inside carry no prefix, matching the {{/* */}} header already in
-# internal/viewer/templates/app-header.html.
-BLOCK_HEADER='/*
-SPDX-License-Identifier: Apache-2.0
-Copyright 2026 alibaba/open-code-review Contributors
-*/'
+source "$REPO_ROOT/scripts/license-policy.sh"
 
 # Grouped by the comment syntax add_header gives each below: // for Go, the
 # JS/TS family and Kotlin, # for shell and Python, /* */ for CSS. Extensions
@@ -108,6 +92,18 @@ while IFS= read -r file; do
     fi
   done
   $match || continue
+
+  license_policy "$file"
+  SPDX_REGEX="SPDX-License-Identifier: $LICENSE_IDENTIFIER"
+  COPYRIGHT_REGEX="Copyright [0-9]{4} $LICENSE_OWNER"
+  SLASH_HEADER="// SPDX-License-Identifier: $LICENSE_IDENTIFIER
+// Copyright 2026 $LICENSE_OWNER"
+  HASH_HEADER="# SPDX-License-Identifier: $LICENSE_IDENTIFIER
+# Copyright 2026 $LICENSE_OWNER"
+  BLOCK_HEADER="/*
+SPDX-License-Identifier: $LICENSE_IDENTIFIER
+Copyright 2026 $LICENSE_OWNER
+*/"
 
   has_header "$file" && continue
 

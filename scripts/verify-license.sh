@@ -10,9 +10,8 @@ cd "$REPO_ROOT"
 
 CURRENT_YEAR=$(date +%Y)
 MIN_YEAR=2026
-SPDX_REGEX="SPDX-License-Identifier: Apache-2.0"
-COPYRIGHT_REGEX="Copyright [0-9]{4} alibaba/open-code-review Contributors"
 YEAR_REGEX="Copyright ([0-9]{4})"
+source "$REPO_ROOT/scripts/license-policy.sh"
 
 # Keep in step with LICENSE_EXTS in add-license.sh, which also records why each
 # extension is in or out. This side only greps for the header text, so the
@@ -51,6 +50,10 @@ while IFS= read -r file; do
     fi
   done
   $match || continue
+
+  license_policy "$file"
+  SPDX_REGEX="SPDX-License-Identifier: $LICENSE_IDENTIFIER"
+  COPYRIGHT_REGEX="Copyright [0-9]{4} $LICENSE_OWNER"
 
   header="$(head -20 "$file")"
 

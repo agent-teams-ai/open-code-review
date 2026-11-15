@@ -1,0 +1,198 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "alibaba/open-code-review",
+    "commit": "8eb83340a487b1150af00701b94f01af97e4b4d6",
+    "preservedAncestorCommits": 803
+  },
+  "reviewRouter": {
+    "repository": "777genius/review-router",
+    "patchSourceCommit": "1112a0f1de568f9fa927316ab68cef54fbcd4653",
+    "originalReleaseBuildCommit": "49afbae9debba7e30251637c4621d164595dc2c5",
+    "experimentParserCommit": "7a079c382d8e98b426ee90a6b3764be2a21b4c49"
+  },
+  "importedCommit": "31f2043c7a8663958b41cffa91ec4a9f17b9b1ea",
+  "importedTree": "801ae83711ce66353bb60871463555db81102d16",
+  "patchCount": 12,
+  "patchDigestSha256": "1580f482c7dba27c3a107d0e5d69bdd681cccc2b67d1e8ccd4af45d40b383d5b",
+  "patches": [
+    {
+      "path": "tools/ocr/patches/0001-managed-mode-core.patch",
+      "sha256": "39fcb0d0abbcf404d3cd7267809c554b7151e0d2e1a62e1a158130a4cb1d19ac",
+      "gitBlob": "c5ad9cb1d139674db05c77078e02d2e527e3e37d",
+      "sourceCommit": "206a543178302d0dc12442d1917d6f358451c695",
+      "sourceAuthor": {
+        "name": "iliya",
+        "email": "iliyazelenkog@gmail.com",
+        "date": "2026-10-20T00:38:18+03:00"
+      },
+      "sourceSubject": "feat(review): run managed OpenCodeReview engine through Account Gateway (plan 56)",
+      "importCommit": "72087f07d9b8f85e1e577455b7012d5c2190ea49"
+    },
+    {
+      "path": "tools/ocr/patches/0002-add-internal-agent-managed-outcome.patch",
+      "sha256": "a0620058374953a1930d3f840e05c2cb46631102eddf91cb785c918d4934de23",
+      "gitBlob": "1debe28be3473309a759756b6ed46df4fa38c68e",
+      "sourceCommit": "206a543178302d0dc12442d1917d6f358451c695",
+      "sourceAuthor": {
+        "name": "iliya",
+        "email": "iliyazelenkog@gmail.com",
+        "date": "2026-10-20T00:38:18+03:00"
+      },
+      "sourceSubject": "feat(review): run managed OpenCodeReview engine through Account Gateway (plan 56)",
+      "importCommit": "407a22d327e9d7a64278ea40f6aec4b189fa3236"
+    },
+    {
+      "path": "tools/ocr/patches/0003-add-internal-llm-managed-endpoint.patch",
+      "sha256": "189fefb4c151511fe257440a2cba6e6e0e27680dc45c62ea6a8728625e876c56",
+      "gitBlob": "984126016c0bbbcc20b14e9e1c774c7358ccd4ee",
+      "sourceCommit": "206a543178302d0dc12442d1917d6f358451c695",
+      "sourceAuthor": {
+        "name": "iliya",
+        "email": "iliyazelenkog@gmail.com",
+        "date": "2026-10-20T00:38:18+03:00"
+      },
+      "sourceSubject": "feat(review): run managed OpenCodeReview engine through Account Gateway (plan 56)",
+      "importCommit": "468211e36d9acbce4846b3075945d15fb08d9034"
+    },
+    {
+      "path": "tools/ocr/patches/0004-add-internal-llm-serializing-client.patch",
+      "sha256": "960af8b282537948b2c6fb665e9f458263654ca9a3a904ca1a678c41d3f0c369",
+      "gitBlob": "639908e03470e59e11f8aad59943d2feac44e45c",
+      "sourceCommit": "ae98c98da685497112c34ad60d9aebe3776108a7",
+      "sourceAuthor": {
+        "name": "iliya",
+        "email": "iliyazelenkog@gmail.com",
+        "date": "2026-10-20T20:37:44+03:00"
+      },
+      "sourceSubject": "fix(ocr): fence canceled model calls and preserve gateway requests",
+      "importCommit": "eb2bd7a1b4cde86e5e0bd1e138b38eeacc806416"
+    },
+    {
+      "path": "tools/ocr/patches/0005-add-managed-outcome-tests.patch",
+      "sha256": "e061d87f65406f1b4f58d717f83c21ec041d50ed5d54a4e282dc7c086581e33d",
+      "gitBlob": "1fd57d060b84018ce880c4db1e0904a16b123083",
+      "sourceCommit": "206a543178302d0dc12442d1917d6f358451c695",
+      "sourceAuthor": {
+        "name": "iliya",
+        "email": "iliyazelenkog@gmail.com",
+        "date": "2026-10-20T00:38:18+03:00"
+      },
+      "sourceSubject": "feat(review): run managed OpenCodeReview engine through Account Gateway (plan 56)",
+      "importCommit": "3d55c0247626e7072f0049c432fc689aa6171049"
+    },
+    {
+      "path": "tools/ocr/patches/0006-add-managed-endpoint-tests.patch",
+      "sha256": "f55dce982c526bb102760a3ac9dcf8d389ca411bb674a5fe93942b6ea667ba03",
+      "gitBlob": "d2ebbbd9b7044ee95731455c9d486829715a835e",
+      "sourceCommit": "206a543178302d0dc12442d1917d6f358451c695",
+      "sourceAuthor": {
+        "name": "iliya",
+        "email": "iliyazelenkog@gmail.com",
+        "date": "2026-10-20T00:38:18+03:00"
+      },
+      "sourceSubject": "feat(review): run managed OpenCodeReview engine through Account Gateway (plan 56)",
+      "importCommit": "111b57e6adcc9013a48a5f346f53f217e752e6bf"
+    },
+    {
+      "path": "tools/ocr/patches/0007-add-serializing-client-tests.patch",
+      "sha256": "f92479e071294caef89726af6ae56afb1c386b788fc78fe4495889f77ceafb5d",
+      "gitBlob": "19631ac64dc653e746be819f82865ca00fb71765",
+      "sourceCommit": "206a543178302d0dc12442d1917d6f358451c695",
+      "sourceAuthor": {
+        "name": "iliya",
+        "email": "iliyazelenkog@gmail.com",
+        "date": "2026-10-20T00:38:18+03:00"
+      },
+      "sourceSubject": "feat(review): run managed OpenCodeReview engine through Account Gateway (plan 56)",
+      "importCommit": "1d84ebbfc6c93b962b6b1c8ed627022b369df32f"
+    },
+    {
+      "path": "tools/ocr/patches/0008-managed-review-regressions.patch",
+      "sha256": "45c5c0ffe820f679c5724b3bbba92504ec414c8c604f44da3d0f87d62496f744",
+      "gitBlob": "3f2878ae4c29f356c39d01a250b8c6db33a03c34",
+      "sourceCommit": "1ee22978f317d92c9454b60bf589ad344db8ec2a",
+      "sourceAuthor": {
+        "name": "iliya",
+        "email": "iliyazelenkog@gmail.com",
+        "date": "2026-10-20T11:21:21+03:00"
+      },
+      "sourceSubject": "fix(review): preserve OCR finding provenance and bounded execution",
+      "importCommit": "bf946a6eda996f60e86c203f523ed6c7450346b4"
+    },
+    {
+      "path": "tools/ocr/patches/0009-pre-canceled-serialization-regression.patch",
+      "sha256": "736b2b72e448d8800ef96d714d3a21ae91aee2b9fbed393c445237cb7f266397",
+      "gitBlob": "b50117abb864674ced5622e817beadaea40e8347",
+      "sourceCommit": "ae98c98da685497112c34ad60d9aebe3776108a7",
+      "sourceAuthor": {
+        "name": "iliya",
+        "email": "iliyazelenkog@gmail.com",
+        "date": "2026-10-20T20:37:44+03:00"
+      },
+      "sourceSubject": "fix(ocr): fence canceled model calls and preserve gateway requests",
+      "importCommit": "b26b9d96c3cea86eb9d635e6d06a7f68a5d0ebf8"
+    },
+    {
+      "path": "tools/ocr/patches/0010-managed-review-skills-exact-paths.patch",
+      "sha256": "5590462f0d9ffe2d29f9fa0b3c8cdeff327f9b237bee8571030e8a87e09ab08b",
+      "gitBlob": "f0a0f1fd1144b0564c057ece0ecc6c3a8bd6c57e",
+      "sourceCommit": "8f63bfe638832a470a77cba1ec55d5a9f7ba8835",
+      "sourceAuthor": {
+        "name": "Илия",
+        "email": "quantjumppro@gmail.com",
+        "date": "2026-10-21T10:19:17-07:00"
+      },
+      "sourceSubject": "feat(skills): execute captured review policies in OCR and native engines",
+      "importCommit": "b3dea05d77c237a769c8bc0f222c931efae1997d"
+    },
+    {
+      "path": "tools/ocr/patches/0011-managed-native-anthropic.patch",
+      "sha256": "538125133200f52d5f06c497beb7c5602270869fef4d20a4d35a8cb132ffd1b4",
+      "gitBlob": "5e3745875c4d2ce04e43e81932f8fd88d93fbea6",
+      "sourceCommit": "6c20f1d1c596b3ea2bf1b04b8d89a7b21d3b74bb",
+      "sourceAuthor": {
+        "name": "Илия",
+        "email": "iliyazelenkog@gmail.com",
+        "date": "2026-10-26T23:40:12+02:00"
+      },
+      "sourceSubject": "test(ocr): qualify native managed runtime in isolated candidate CI",
+      "importCommit": "ee1b0839c746f0bf10234389a9a727b4a35c1d1e"
+    },
+    {
+      "path": "tools/ocr/patches/0011-opaque-template-replacements.patch",
+      "sha256": "c80d277d5bb23e92122d36c2a1708a12d4bd93d7aa765aa51a46e924e46cd9f7",
+      "gitBlob": "37df4b8696db736cc9422e51b0b9db0e0d8d533c",
+      "sourceCommit": "955c336e53dce44249298e7677c14add17512ab5",
+      "sourceAuthor": {
+        "name": "iliya",
+        "email": "iliyazelenkog@gmail.com",
+        "date": "2026-10-28T23:30:28+08:00"
+      },
+      "sourceSubject": "feat: add managed conversations and shared frozen memory consumers",
+      "importCommit": "31f2043c7a8663958b41cffa91ec4a9f17b9b1ea"
+    }
+  ],
+  "approvedHistoricalArtifact": {
+    "version": "1.13.1-rr.6",
+    "url": "https://github.com/777genius/review-router/releases/download/ocr-v1.13.1-rr.6/opencodereview-linux-amd64",
+    "size": 80513363,
+    "sha256": "9dd5f115747d24100f0767133a3288d268f3bc399675f5b826e7a867d101ee5c",
+    "toolchain": "go1.26.10",
+    "schema": "reviewrouter.ocr-outcome/v1"
+  },
+  "independentSourceReplay": {
+    "result": "identical",
+    "files": 1132,
+    "method": "Archive pinned upstream, apply each independently hash-verified original patch in lexical order, compare SHA-256 for every file against archive of imported commit."
+  },
+  "independentHistoricalRebuild": {
+    "result": "byte-identical",
+    "sourceCommit": "31f2043c7a8663958b41cffa91ec4a9f17b9b1ea",
+    "toolchain": "go1.26.10",
+    "platform": "linux/amd64",
+    "size": 80513363,
+    "sha256": "9dd5f115747d24100f0767133a3288d268f3bc399675f5b826e7a867d101ee5c",
+    "command": "CGO_ENABLED=0 go build -p 2 -trimpath -buildvcs=false -ldflags -X=main.Version=1.13.1-rr.6 -o opencodereview ./cmd/opencodereview"
+  }
+}

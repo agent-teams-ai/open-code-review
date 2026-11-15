@@ -1,0 +1,16 @@
+OpenCodeReview managed fork
+
+Based on alibaba/open-code-review, licensed under Apache-2.0.
+Original upstream copyright and source history are retained.
+
+Managed integration changes were imported from 777genius/review-router.
+The original repository-level MIT license is retained at
+tools/managed/provenance/ReviewRouter-LICENSE. Original source-specific
+Apache-2.0 headers are preserved. The five imported source files without
+original headers are identified in scripts/license-policy.sh and retain MIT.
+Their original authors and source commits are recorded in
+tools/managed/provenance/review-router-import.json.
+
+Additional fork maintenance code is licensed under Apache-2.0 and identifies
+OpenCodeReview fork contributors in its source headers. Contributors retain
+their respective copyright. This notice does not replace per-file licenses.
