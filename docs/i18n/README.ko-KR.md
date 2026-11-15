@@ -1,3 +1,13 @@
+# OpenCodeReview 관리 모드 포크
+
+이 브랜치는 `agent-teams-ai`의 네이티브 OpenCodeReview CLI를 유지하며, 업스트림 이력과 기존 ReviewRouter에서 관리하던 관리 모드 변경 사항을 보존합니다.
+빌드 입력, 검증, 릴리스 출처 및 업스트림 업데이트 절차는 [포크 관리 가이드](../managed-fork.md)를 참조하세요.
+
+아래 문서는 업스트림에서 유지한 문서입니다. npm 패키지, 편집기 확장, 웹사이트 및 벤치마크 주장은 업스트림 프로젝트에 해당합니다.
+이 포크의 빌드 및 릴리스 범위는 포크 관리 가이드에 설명되어 있습니다.
+
+---
+
 <div align="center">
   <a href="https://open-codereview.ai">
     <img src="../../imgs/logo-core.svg" alt="OpenCodeReview logo" width="180" />

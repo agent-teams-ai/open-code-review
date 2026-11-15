@@ -1,3 +1,13 @@
+# OpenCodeReview 托管模式分支
+
+此分支由 `agent-teams-ai` 维护原生 OpenCodeReview CLI，保留上游历史以及原先由 ReviewRouter 维护的托管模式修改。
+构建输入、验证、发布来源和上游更新流程见[托管分支指南](../managed-fork.md)。
+
+以下文档保留自上游。其中的 npm 包、编辑器扩展、网站和基准测试结论属于上游项目。
+本分支的构建和发布范围以托管分支指南为准。
+
+---
+
 <div align="center">
   <a href="https://open-codereview.ai">
     <img src="../../imgs/logo-core.svg" alt="OpenCodeReview logo" width="180" />

@@ -1,0 +1,147 @@
+name: Managed OCR release
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Full reviewed main commit to qualify and publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: managed-ocr-release
+  cancel-in-progress: false
+
+jobs:
+  source:
+    if: github.repository == 'agent-teams-ai/open-code-review' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify the requested source is current main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          WORKFLOW_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_SOURCE_SHA" == "$WORKFLOW_SOURCE_SHA" ]]
+          [[ "$(gh api "repos/${GH_REPO}/git/ref/heads/main" --jq .object.sha)" == "$EXPECTED_SOURCE_SHA" ]]
+
+  qualify:
+    needs: source
+    uses: ./.github/workflows/managed-ci.yml
+    permissions:
+      contents: read
+
+  publish:
+    needs: [source, qualify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+      QUALIFIED_SOURCE_SHA: ${{ needs.qualify.outputs.source_commit }}
+      RELEASE_VERSION: ${{ needs.qualify.outputs.release_version }}
+      BINARY_SHA256: ${{ needs.qualify.outputs.binary_sha256 }}
+      MANIFEST_SHA256: ${{ needs.qualify.outputs.manifest_sha256 }}
+      QUALIFICATION_SHA256: ${{ needs.qualify.outputs.qualification_sha256 }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.qualify.outputs.artifact_id }}
+          merge-multiple: true
+          path: candidate
+
+      - name: Verify qualified artifact identities without executing the CLI
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$QUALIFIED_SOURCE_SHA" == "$EXPECTED_SOURCE_SHA" ]]
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rr\.[0-9]+$ ]]
+          [[ "$RELEASE_VERSION" != '1.13.1-rr.6' ]]
+          [[ "$BINARY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$QUALIFICATION_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          cd candidate
+          [[ "$(find . -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 7 ]]
+          [[ -z "$(find . -mindepth 1 ! -type f -print -quit)" ]]
+          printf '%s  opencodereview-linux-amd64\n' "$BINARY_SHA256" | sha256sum --check --strict
+          printf '%s  MANIFEST\n' "$MANIFEST_SHA256" | sha256sum --check --strict
+          printf '%s  qualification.json\n' "$QUALIFICATION_SHA256" | sha256sum --check --strict
+          printf '%s  opencodereview-linux-amd64\n' "$BINARY_SHA256" | cmp - opencodereview-linux-amd64.sha256
+          for mapping in license_sha256:LICENSE notice_sha256:NOTICE reviewrouter_license_sha256:ReviewRouter-LICENSE; do
+            field="${mapping%%:*}"
+            asset="${mapping#*:}"
+            digest="$(sed -n "s/^${field}=//p" MANIFEST)"
+            [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+            printf '%s  %s\n' "$digest" "$asset" | sha256sum --check --strict
+          done
+          jq -e --arg source "$EXPECTED_SOURCE_SHA" --arg version "$RELEASE_VERSION" \
+            --arg binary "$BINARY_SHA256" --arg manifest "$MANIFEST_SHA256" \
+            '.schema_version == "opencodereview.managed-qualification/v1" and .passed == true and .model_free == true and .source_commit == $source and .release_version == $version and .binary_sha256 == $binary and .manifest_sha256 == $manifest and .outcome_schema_version == "reviewrouter.ocr-outcome/v1" and (.qualification_cases | length) == 4 and all(.qualification_cases[]; .passed == true)' \
+            qualification.json
+
+      - name: Publish once, after verifying remote draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [[ "$(gh api "repos/${GH_REPO}/git/ref/heads/main" --jq .object.sha)" == "$EXPECTED_SOURCE_SHA" ]]
+          release_tag="ocr-v${RELEASE_VERSION}"
+          for endpoint in "git/ref/tags/${release_tag}" "releases/tags/${release_tag}"; do
+            response="${RUNNER_TEMP}/existing-release-response"
+            if gh api --include "repos/${GH_REPO}/${endpoint}" > "$response" 2>&1; then
+              echo "Refusing to replace existing ${endpoint}." >&2
+              exit 1
+            fi
+            if ! grep -Eq '^HTTP/[^ ]+ 404( |$)' "$response"; then
+              echo "Cannot establish that ${endpoint} is absent. No write attempted." >&2
+              exit 1
+            fi
+          done
+          cat > "${RUNNER_TEMP}/release-notes.md" <<EOF
+          Managed OpenCodeReview ${RELEASE_VERSION}
+
+          Source: ${EXPECTED_SOURCE_SHA}
+          Binary SHA-256: ${BINARY_SHA256}
+
+          The attached MANIFEST binds this Linux/amd64 binary to the full fork source,
+          upstream base, pinned Go toolchain and build flags. qualification.json records
+          model-free execution against fixed loopback providers. No live model quality
+          or production activation is claimed. Consumers must adopt this exact artifact
+          through their own runtime admission procedure.
+
+          LICENSE, NOTICE and ReviewRouter-LICENSE retain the upstream and imported
+          contribution licensing and attribution. Their hashes are in MANIFEST.
+
+          The frozen 1.13.1-rr.6 experiment artifact remains in the original ReviewRouter
+          release and is not replaced by this release.
+          EOF
+          gh release create "$release_tag" \
+            candidate/opencodereview-linux-amd64 \
+            candidate/opencodereview-linux-amd64.sha256 \
+            candidate/MANIFEST candidate/qualification.json \
+            candidate/LICENSE candidate/NOTICE candidate/ReviewRouter-LICENSE \
+            --draft --target "$EXPECTED_SOURCE_SHA" \
+            --title "Managed OpenCodeReview ${RELEASE_VERSION}" \
+            --notes-file "${RUNNER_TEMP}/release-notes.md"
+          gh release download "$release_tag" --dir "${RUNNER_TEMP}/remote-draft"
+          for asset in opencodereview-linux-amd64 opencodereview-linux-amd64.sha256 MANIFEST qualification.json LICENSE NOTICE ReviewRouter-LICENSE; do
+            cmp "candidate/${asset}" "${RUNNER_TEMP}/remote-draft/${asset}"
+          done
+          gh api "repos/${GH_REPO}/releases/tags/${release_tag}" \
+            --jq '{draft, tag_name, target_commitish, assets: [.assets[].name]}' > "${RUNNER_TEMP}/draft.json"
+          jq -e --arg source "$EXPECTED_SOURCE_SHA" --arg tag "$release_tag" \
+            '.draft == true and .tag_name == $tag and .target_commitish == $source and (.assets | sort) == (["LICENSE", "NOTICE", "ReviewRouter-LICENSE", "MANIFEST", "opencodereview-linux-amd64", "opencodereview-linux-amd64.sha256", "qualification.json"] | sort)' \
+            "${RUNNER_TEMP}/draft.json"
+          gh release edit "$release_tag" --draft=false
+          [[ "$(gh api "repos/${GH_REPO}/git/ref/tags/${release_tag}" --jq .object.sha)" == "$EXPECTED_SOURCE_SHA" ]]
+          [[ "$(gh api "repos/${GH_REPO}/releases/tags/${release_tag}" --jq .draft)" == false ]]

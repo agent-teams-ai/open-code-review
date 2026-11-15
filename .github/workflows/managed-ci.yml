@@ -1,0 +1,122 @@
+name: Managed OCR CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+    outputs:
+      artifact_id:
+        value: ${{ jobs.verify.outputs.artifact_id }}
+      source_commit:
+        value: ${{ jobs.verify.outputs.source_commit }}
+      release_version:
+        value: ${{ jobs.verify.outputs.release_version }}
+      binary_sha256:
+        value: ${{ jobs.verify.outputs.binary_sha256 }}
+      manifest_sha256:
+        value: ${{ jobs.verify.outputs.manifest_sha256 }}
+      qualification_sha256:
+        value: ${{ jobs.verify.outputs.qualification_sha256 }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GOTOOLCHAIN: local
+      GOENV: 'off'
+      GOWORK: 'off'
+      GO111MODULE: 'on'
+      GOFIPS140: 'off'
+      GOFLAGS: -mod=readonly
+      LC_ALL: C
+      OCR_NO_UPDATE: '1'
+      OCR_ENABLE_TELEMETRY: '0'
+      OCR_DELEGATE_REQUIRE_PTY: '1'
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+      source_commit: ${{ steps.identity.outputs.source_commit }}
+      release_version: ${{ steps.identity.outputs.release_version }}
+      binary_sha256: ${{ steps.identity.outputs.binary_sha256 }}
+      manifest_sha256: ${{ steps.identity.outputs.manifest_sha256 }}
+      qualification_sha256: ${{ steps.identity.outputs.qualification_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.10'
+          cache: true
+
+      - name: Check native source, ownership and generated contracts
+        run: |
+          set -euo pipefail
+          make check
+          bash scripts/verify-action-pins.sh
+          go run ./internal/llm/gen -check -output extensions/frontend/src/shared/providers.generated.ts -kotlin-output extensions/idea/src/main/kotlin/com/alibaba/opencodereview/idea/services/ProviderNames.generated.kt
+          git diff --exit-code
+
+      - name: Run native tests with race detector
+        run: make test
+
+      - name: Check native dependencies for reachable vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
+      - name: Enforce native coverage threshold
+        run: make coverage
+
+      - name: Build pinned managed CLI
+        run: tools/managed/build.sh
+
+      - name: Qualify real CLI with fixed loopback providers
+        run: tools/managed/qualify.sh "$PWD/dist/managed/opencodereview-linux-amd64" "$PWD/dist/managed/qualification.json"
+
+      - name: Bind artifacts to verified source
+        id: identity
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          source_commit="$(git rev-parse HEAD)"
+          [[ "$source_commit" == "$EXPECTED_SOURCE_SHA" ]]
+          [[ -z "$(git status --porcelain --untracked-files=normal)" ]]
+          RELEASE_VERSION="$(sed -n 's/^release_version=//p' dist/managed/MANIFEST)"
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rr\.[0-9]+$ ]]
+          binary_sha256="$(sha256sum dist/managed/opencodereview-linux-amd64 | cut -d ' ' -f 1)"
+          manifest_sha256="$(sha256sum dist/managed/MANIFEST | cut -d ' ' -f 1)"
+          qualification_sha256="$(sha256sum dist/managed/qualification.json | cut -d ' ' -f 1)"
+          jq -e --arg source "$source_commit" --arg version "$RELEASE_VERSION" \
+            --arg binary "$binary_sha256" --arg manifest "$manifest_sha256" \
+            '.schema_version == "opencodereview.managed-qualification/v1" and .passed == true and .model_free == true and .source_commit == $source and .release_version == $version and .binary_sha256 == $binary and .manifest_sha256 == $manifest and .outcome_schema_version == "reviewrouter.ocr-outcome/v1" and (.qualification_cases | length) == 4 and all(.qualification_cases[]; .passed == true)' \
+            dist/managed/qualification.json
+          {
+            printf 'source_commit=%s\n' "$source_commit"
+            printf 'release_version=%s\n' "$RELEASE_VERSION"
+            printf 'binary_sha256=%s\n' "$binary_sha256"
+            printf 'manifest_sha256=%s\n' "$manifest_sha256"
+            printf 'qualification_sha256=%s\n' "$qualification_sha256"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Retain qualified native release candidate
+        id: artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: managed-ocr-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dist/managed/opencodereview-linux-amd64
+            dist/managed/opencodereview-linux-amd64.sha256
+            dist/managed/MANIFEST
+            dist/managed/qualification.json
+            dist/managed/LICENSE
+            dist/managed/NOTICE
+            dist/managed/ReviewRouter-LICENSE

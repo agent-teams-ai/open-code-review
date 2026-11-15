@@ -1,3 +1,16 @@
+# Managed OpenCodeReview fork
+
+This branch maintains the native OpenCodeReview CLI for `agent-teams-ai`, with
+its upstream history and the managed changes originally carried by ReviewRouter.
+See the [managed fork guide](docs/managed-fork.md) for build inputs, qualification,
+release provenance and upstream updates.
+
+The documentation below is retained from upstream. Its npm packages, editor
+extensions, website and benchmark claims describe upstream. Use the managed
+fork guide for this fork's build and release scope.
+
+---
+
 <div align="center">
   <a href="https://open-codereview.ai">
     <img src="imgs/logo-core.svg" alt="OpenCodeReview logo" width="180" />

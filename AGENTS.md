@@ -2,6 +2,21 @@
 
 This file provides instructions for AI coding assistants working on this project.
 
+## Maintained fork guidance
+
+For organization-owned changes, read and follow the maintained
+[Engineering Quality Standard](https://github.com/agent-teams-ai/.github/blob/main/docs/engineering-quality-standard.md)
+within this fork's adopted scope and pinned toolchain. Read the
+[managed fork guide](docs/managed-fork.md) before changing builds, releases,
+managed behavior or the upstream baseline. Preserve upstream history and
+original attribution. Consumer policy remains with its consuming project.
+
+The owner explicitly scoped this source extraction and its qualification as
+model-free. The model-backed OCR self-review command below is not run for this
+work. Use code review, deterministic tests and the managed fake-provider
+qualification, and report the actual evidence. Do not treat this exception as
+permission to claim a live review or AI-quality result.
+
 ## Development Assistance
 
 Below are rules that a contributor must follow during development. If the user does not follow these rules, please warn users about this:

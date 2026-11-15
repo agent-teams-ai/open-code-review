@@ -1,3 +1,16 @@
+# Форк OpenCodeReview с managed-режимом
+
+Эта ветка содержит нативный CLI OpenCodeReview для `agent-teams-ai` с сохранением
+истории upstream и изменений managed-режима, ранее поддерживаемых в ReviewRouter.
+Исходные данные сборки, проверки, происхождение релизов и обновление upstream
+описаны в [руководстве по поддержке форка](../managed-fork.md).
+
+Ниже сохранена документация upstream. Указанные в ней npm-пакеты, расширения
+редакторов, сайт и результаты бенчмарков относятся к upstream. Область сборки
+и выпуска этого форка описана в руководстве по его поддержке.
+
+---
+
 <div align="center">
   <a href="https://open-codereview.ai">
     <img src="../../imgs/logo-core.svg" alt="OpenCodeReview logo" width="180" />

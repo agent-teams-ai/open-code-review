@@ -88,9 +88,10 @@ func TestURLPatternFormat(t *testing.T) {
 	}
 }
 
-func TestReleaseYmlMatchesURLPattern(t *testing.T) {
+func TestUpstreamReleaseYmlMatchesURLPattern(t *testing.T) {
 	pkg := loadPackageJSON(t)
-	yml := loadFile(t, ".github/workflows/release.yml")
+	// The retained npm wrapper belongs to the upstream distribution.
+	yml := loadFile(t, ".github/upstream-workflows/release.yml")
 
 	// Match: BIN_NAME=opencodereview-${{ matrix.goos }}-${{ matrix.goarch }}
 	re := regexp.MustCompile(`BIN_NAME=(opencodereview[^\n]*\}\})`)

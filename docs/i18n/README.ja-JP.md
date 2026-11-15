@@ -1,3 +1,13 @@
+# OpenCodeReview マネージドモードのフォーク
+
+このブランチは `agent-teams-ai` が利用するネイティブ OpenCodeReview CLI を管理し、上流の履歴と ReviewRouter で管理されていたマネージドモードの変更を保持します。
+ビルド入力、検証、リリースの来歴、上流の更新手順については[フォークの管理ガイド](../managed-fork.md)を参照してください。
+
+以下は上流のドキュメントです。npm パッケージ、エディター拡張、ウェブサイト、ベンチマークの主張は上流プロジェクトのものです。
+このフォークのビルドとリリースの対象範囲は管理ガイドに記載しています。
+
+---
+
 <div align="center">
   <a href="https://open-codereview.ai">
     <img src="../../imgs/logo-core.svg" alt="OpenCodeReview logo" width="180" />
