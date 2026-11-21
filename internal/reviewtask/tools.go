@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/alibaba/open-code-review/internal/diff"
 	"github.com/alibaba/open-code-review/internal/llm"
+	"github.com/alibaba/open-code-review/internal/llmloop"
 	"github.com/alibaba/open-code-review/internal/model"
 	"github.com/alibaba/open-code-review/internal/session"
 	"github.com/alibaba/open-code-review/internal/telemetry"
@@ -154,8 +155,14 @@ func (r *Runner) executeToolCall(ctx context.Context, taskKey string, call llm.T
 							if resp != nil {
 								rlRec.SetResponse(resp, time.Since(rlStart))
 								r.RecordUsage(resp.Usage)
+								r.recordPhase(taskKey, llmloop.PhaseRelocation, llmloop.PhaseCompleted, "")
 							} else {
 								rlRec.SetError(fmt.Errorf("re-location LLM call failed"), time.Since(rlStart))
+								reason := "error"
+								if reqCtx.Err() != nil {
+									reason = "cancelled"
+								}
+								r.recordPhase(taskKey, llmloop.PhaseRelocation, llmloop.PhaseFailed, reason)
 							}
 						}
 					}
@@ -170,8 +177,16 @@ func (r *Runner) executeToolCall(ctx context.Context, taskKey string, call llm.T
 			}
 			pool := r.deps.CommentWorkerPool
 			asyncCtx := context.WithoutCancel(ctx)
+			var cancelAsync context.CancelFunc
+			if r.deps.Managed {
+				// Keep managed relocation work bound to the group deadline.
+				asyncCtx, cancelAsync = context.WithCancel(ctx)
+			}
 			toolName := t.Name()
 			pool.SubmitFor(taskKey, func() ([]model.LlmComment, error) {
+				if cancelAsync != nil {
+					defer cancelAsync()
+				}
 				defer func() {
 					dur := time.Since(startTime)
 					telemetry.RecordToolResult(toolSpan, toolName, dur.Milliseconds(), nil)

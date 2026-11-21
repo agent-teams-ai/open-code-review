@@ -59,6 +59,8 @@ type Deps struct {
 	// unlimited, which is also what scan and every existing caller get by
 	// default.
 	MaxTokensBudget int64
+	Managed         bool
+	PhaseRecorder   llmloop.ManagedPhaseRecorder
 }
 
 type Runner struct {
@@ -79,6 +81,8 @@ func NewRunner(deps Deps) *Runner {
 		Session:         deps.Session,
 		NewRequestMeta:  deps.NewRequestMeta,
 		MaxTokensBudget: deps.MaxTokensBudget,
+		Managed:         deps.Managed,
+		PhaseRecorder:   deps.PhaseRecorder,
 	}, llmloop.Task{
 		ToolDefs: deps.MainToolDefs,
 		ExecuteTool: func(ctx context.Context, key string, call llm.ToolCall, record *session.TaskRecord, thinking string) llmloop.ToolOutcome {
@@ -113,6 +117,12 @@ func NewRunner(deps Deps) *Runner {
 		},
 	})
 	return runner
+}
+
+func (r *Runner) recordPhase(taskKey string, phase llmloop.ManagedPhase, state llmloop.ManagedPhaseState, reason string) {
+	if r.deps.PhaseRecorder != nil {
+		r.deps.PhaseRecorder.RecordPhaseOutcome(taskKey, phase, state, reason)
+	}
 }
 
 func (r *Runner) RunMainTask(ctx context.Context, messages []llm.Message, taskKey string) (bool, llmloop.MainLoopStop, error) {

@@ -254,13 +254,16 @@ func copyMessages(msgs []llm.Message) []llm.Message {
 // intact. Returns rebuilt as [frozen] + [compressed_summary appended to
 // the user prompt] + [active].
 func (r *Runner) runCompression(ctx context.Context, msgs []llm.Message, taskKey string) ([]llm.Message, error) {
-	if len(r.deps.Template.MemoryCompressionTask.Messages) == 0 {
+	if len(r.task.Compression.Messages) == 0 {
 		r.recordPhase(taskKey, PhaseCompression, PhaseNotApplicable, "disabled")
-		return msgs[:min(len(msgs), 2)], nil
+		if r.deps.Managed {
+			return msgs[:min(len(msgs), 2)], nil
+		}
+		return msgs, nil
 	}
 	if len(msgs) <= 2 {
 		r.recordPhase(taskKey, PhaseCompression, PhaseNotApplicable, "no_zone")
-		return msgs[:min(len(msgs), 2)], nil
+		return msgs, nil
 	}
 
 	limit := PromptTokenLimit(r.task.MaxContextTokens)
