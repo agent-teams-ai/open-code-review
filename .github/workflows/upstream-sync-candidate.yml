@@ -1,0 +1,98 @@
+name: Upstream sync candidate (temporary)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/upstream-sync-candidate.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.repository == 'agent-teams-ai/open-code-review' && github.event.pull_request.head.repo.full_name == 'agent-teams-ai/open-code-review' && github.head_ref == 'sync/upstream-2026-11-21'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Merge exact upstream object into Draft PR branch (candidate only)
+        shell: bash
+        env:
+          UPSTREAM_SHA: 39515dca6161fb7fd176d87704b2b10e5f7a0c36
+          EXPECTED_MAIN_SHA: 997293d17d2d4db08c942ecdd4d6fe0af91811a9
+          TARGET_BRANCH: sync/upstream-2026-11-21
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          git merge-base --is-ancestor "$EXPECTED_MAIN_SHA" HEAD
+          if git cat-file -e "$UPSTREAM_SHA^{commit}" 2>/dev/null && git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
+            echo "Already contains pinned upstream; no changes"
+            exit 0
+          fi
+          git fetch --no-tags https://github.com/alibaba/open-code-review.git "$UPSTREAM_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$UPSTREAM_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git merge --no-ff --no-commit -X ours "$UPSTREAM_SHA"
+
+          # This is a native-only managed fork: never activate upstream publication.
+          mkdir -p .github/upstream-workflows
+          for path in .github/workflows/*.yml; do
+            name="${path##*/}"
+            case "$name" in
+              managed-ci.yml|managed-release.yml|upstream-sync-preflight.yml|upstream-sync-candidate.yml) ;;
+              *) mv -f "$path" ".github/upstream-workflows/$name" ;;
+            esac
+          done
+          mapfile -t active < <(find .github/workflows -maxdepth 1 -type f -printf '%f\n' | sort)
+          printf 'ACTIVE_WORKFLOWS: %s\n' "${active[*]}"
+          test "${#active[@]}" -eq 4
+
+          # Keep the security-fixed managed toolchain and assign a new fork version.
+          sed -i 's/^go 1\.26\.10$/go 1.26.11/' go.mod
+          sed -i "s/^UPSTREAM_COMMIT=.*/UPSTREAM_COMMIT=$UPSTREAM_SHA/" tools/managed/release.env
+          sed -i 's/^RELEASE_VERSION=.*/RELEASE_VERSION=1.14.0-rr.1/' tools/managed/release.env
+          cat >> docs/managed-fork.md <<'EOF'
+
+          ## Upstream 1.14.0 synchronization (candidate)
+
+          Target: `alibaba/open-code-review@39515dca6161fb7fd176d87704b2b10e5f7a0c36`.
+          This merges upstream history and retains managed ReviewRouter extensions.
+          Version `1.14.0-rr.1` is a candidate only, not a release or a consumer
+          migration. The original 1.13.1 import, provenance and approved binary
+          remain immutable. Native CI, four-case model-free E2E and a code review
+          must pass before merge or publication.
+          EOF
+
+          git add -A
+          test -z "$(git ls-files -u)"
+          git diff --cached --check
+          git commit -m "merge: integrate upstream OpenCodeReview 1.14.0 into managed fork"
+          git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD
+          git merge-base --is-ancestor "$EXPECTED_MAIN_SHA" HEAD
+          test "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 3
+          echo "CANDIDATE_SHA=$(git rev-parse HEAD)"
+          echo '=== Candidate files vs managed main ==='
+          git diff --stat "$EXPECTED_MAIN_SHA" HEAD | tail -35
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Compile and test key runtime packages (diagnostic)
+        shell: bash
+        env:
+          OCR_NO_UPDATE: '1'
+          OCR_ENABLE_TELEMETRY: '0'
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          go test ./internal/llmloop ./internal/agent ./internal/llm ./cmd/opencodereview
+          git diff --exit-code
