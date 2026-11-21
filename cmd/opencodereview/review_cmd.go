@@ -30,28 +30,28 @@ import (
 )
 
 type reviewOptions struct {
-	rulePath              string
-	repoDir               string
-	from                  string
-	to                    string
-	commit                string
-	resume                string
-	excludes              string
-	outputFormat          string
-	audience              string
-	outputPath            string
-	background            string
-	backgroundFile        string
-	provider              string
-	model                 string
-	concurrency           int
-	concurrentTaskTimeout int
-	maxTools              int
-	maxGitProcs           int
-	maxTokens             int
-	maxTokensBudget       int
-	effort                string
-	noFilter              bool
+	rulePath                string
+	repoDir                 string
+	from                    string
+	to                      string
+	commit                  string
+	resume                  string
+	excludes                string
+	outputFormat            string
+	audience                string
+	outputPath              string
+	background              string
+	backgroundFile          string
+	provider                string
+	model                   string
+	concurrency             int
+	concurrentTaskTimeout   int
+	maxTools                int
+	maxGitProcs             int
+	maxTokens               int
+	maxTokensBudget         int
+	effort                  string
+	noFilter                bool
 	preview                 bool
 	managed                 bool
 	analysis                bool

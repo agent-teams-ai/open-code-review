@@ -68,6 +68,14 @@ func TestAnalysisFlags(test *testing.T) {
 	}
 }
 
+func TestManagedAnalysisRejectedToPreserveSerializedOutcome(test *testing.T) {
+	opts := reviewOptions{analysis: true, managed: true, commit: "HEAD", outputFormat: "json"}
+	err := validateAnalysisOptions(opts)
+	if err == nil || !strings.Contains(err.Error(), "--reviewrouter-managed") {
+		test.Fatalf("expected managed analysis incompatibility, got %v", err)
+	}
+}
+
 func TestWorkspaceAnalysisRejectedBeforeReview(test *testing.T) {
 	output := filepath.Join(test.TempDir(), "review.json")
 	err := runReview([]string{"--analysis", "--repo", filepath.Join(test.TempDir(), "missing"), "--output", output})

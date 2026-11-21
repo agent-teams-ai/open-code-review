@@ -29,6 +29,11 @@ func validateAnalysisOptions(opts reviewOptions) error {
 	if !opts.analysis {
 		return nil
 	}
+	// Analysis runs a separate concurrent LLM client; managed runs promise
+	// run-wide serialization and a complete reviewrouter_outcome receipt.
+	if opts.managed {
+		return fmt.Errorf("--analysis cannot be combined with --reviewrouter-managed")
+	}
 	if opts.resume != "" || opts.preview {
 		return fmt.Errorf("--analysis cannot be combined with --resume or --preview")
 	}
