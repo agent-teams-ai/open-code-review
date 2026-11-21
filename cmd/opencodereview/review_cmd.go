@@ -30,7 +30,6 @@ import (
 )
 
 type reviewOptions struct {
-	toolConfigPath        string
 	rulePath              string
 	repoDir               string
 	from                  string
@@ -53,8 +52,10 @@ type reviewOptions struct {
 	maxTokensBudget       int
 	effort                string
 	noFilter              bool
-	preview               bool
-	managed               bool
+	preview                 bool
+	managed                 bool
+	analysis                bool
+	analysisMaxTokensBudget int
 }
 
 var reviewOpts reviewOptions

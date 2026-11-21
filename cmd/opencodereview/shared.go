@@ -276,6 +276,7 @@ func loadLLMRuntime(tpl *template.Template, resolveOpts llm.ResolveOptions) (*ll
 	}
 
 	return &llmRuntime{
+		Endpoint:       ep,
 		Client:         client,
 		Model:          ep.Model,
 		Provider:       ep.Provider,
@@ -901,7 +902,7 @@ func emitRunResult(
 		managedOutcome = p.ManagedOutcome()
 	}
 
-	if machineReadable && manifest == nil && len(comments) == 0 && ag.FilesReviewed() == 0 {
+	if machineReadable && manifest == nil && len(comments) == 0 && ag.FilesReviewed() == 0 && analysis == nil {
 		if outputFormat == "json" {
 			return outputJSONNoFiles(traceID, llmIdentity, out, managedOutcome)
 		}
