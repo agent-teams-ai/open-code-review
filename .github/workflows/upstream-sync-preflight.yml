@@ -1,0 +1,53 @@
+name: Upstream sync preflight (temporary)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/upstream-sync-preflight.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  merge-analysis:
+    if: github.event.pull_request.head.repo.full_name == 'agent-teams-ai/open-code-review' && github.head_ref == 'sync/upstream-2026-11-21'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Analyze actual three-way git merge
+        shell: bash
+        env:
+          PINNED_UPSTREAM: 39515dca6161fb7fd176d87704b2b10e5f7a0c36
+        run: |
+          set -euo pipefail
+          git status --porcelain
+          git fetch --no-tags https://github.com/alibaba/open-code-review.git "${PINNED_UPSTREAM}"
+          test "$(git rev-parse FETCH_HEAD)" = "${PINNED_UPSTREAM}"
+          git merge-base --is-ancestor 8eb83340a487b1150af00701b94f01af97e4b4d6 "${PINNED_UPSTREAM}"
+          git merge-base --is-ancestor 8eb83340a487b1150af00701b94f01af97e4b4d6 HEAD
+          set +e
+          git merge --no-ff --no-commit "${PINNED_UPSTREAM}" > /tmp/merge.log 2>&1
+          merge_status=$?
+          set -e
+          echo "MERGE_EXIT_STATUS=${merge_status}"
+          cat /tmp/merge.log
+          echo '=== Unmerged files ==='
+          git diff --name-only --diff-filter=U
+          echo '=== Unmerged index stage count ==='
+          git ls-files -u | wc -l
+          echo '=== Conflict details (capped) ==='
+          git diff --cc -- . ':!.github/upstream-workflows' | head -c 100000 || true
+          echo '=== Status (capped) ==='
+          git status --short | head -150
+          echo '=== Upstream/managed history ==='
+          git log -1 --format='%H %s' "${PINNED_UPSTREAM}"
+          git log -1 --format='%H %s' HEAD
+          if [ "${merge_status}" -gt 1 ]; then
+            exit "${merge_status}"
+          fi
