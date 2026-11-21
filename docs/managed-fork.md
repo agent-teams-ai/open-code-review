@@ -224,3 +224,12 @@ For the frozen Task Verification pilot, retain the approved binary digest and
 Action parser pin. Hosting migration may change where the same bytes are
 downloaded; it must not silently change the evaluated implementation. Future
 fork versions can be evaluated as explicitly versioned follow-up experiments.
+
+## Upstream 1.14.0 synchronization (candidate)
+
+Target: `alibaba/open-code-review@39515dca6161fb7fd176d87704b2b10e5f7a0c36`.
+This merges upstream history and retains managed ReviewRouter extensions.
+Version `1.14.0-rr.1` is a candidate only, not a release or a consumer
+migration. The original 1.13.1 import, provenance and approved binary
+remain immutable. Native CI, four-case model-free E2E and a code review
+must pass before merge or publication.
