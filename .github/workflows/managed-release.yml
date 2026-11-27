@@ -137,7 +137,9 @@ jobs:
           for asset in opencodereview-linux-amd64 opencodereview-linux-amd64.sha256 MANIFEST qualification.json LICENSE NOTICE ReviewRouter-LICENSE; do
             cmp "candidate/${asset}" "${RUNNER_TEMP}/remote-draft/${asset}"
           done
-          gh api "repos/${GH_REPO}/releases/tags/${release_tag}" \
+          release_id="$(gh release view "$release_tag" --json databaseId --jq .databaseId)"
+          [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/${GH_REPO}/releases/${release_id}" \
             --jq '{draft, tag_name, target_commitish, assets: [.assets[].name]}' > "${RUNNER_TEMP}/draft.json"
           jq -e --arg source "$EXPECTED_SOURCE_SHA" --arg tag "$release_tag" \
             '.draft == true and .tag_name == $tag and .target_commitish == $source and (.assets | sort) == (["LICENSE", "NOTICE", "ReviewRouter-LICENSE", "MANIFEST", "opencodereview-linux-amd64", "opencodereview-linux-amd64.sha256", "qualification.json"] | sort)' \

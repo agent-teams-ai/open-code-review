@@ -61,6 +61,7 @@ jobs:
           set -euo pipefail
           make check
           bash scripts/verify-action-pins.sh
+          bash tools/managed/release-test.sh
           go run ./internal/llm/gen -check -output extensions/frontend/src/shared/providers.generated.ts -kotlin-output extensions/idea/src/main/kotlin/com/alibaba/opencodereview/idea/services/ProviderNames.generated.kt
           git diff --exit-code
 
