@@ -48,6 +48,14 @@ Non-managed tools keep their existing behavior.
 
 ## Qualification and handoff
 
+The fresh native vulnerability gate reported reachable
+[GO-2026-6974](https://pkg.go.dev/vuln/GO-2026-6974) and
+[GO-2026-6975](https://pkg.go.dev/vuln/GO-2026-6975) in OpenTelemetry 1.45.0.
+The existing OpenTelemetry module family is updated together to the minimum
+fixed release, 1.47.0, with its required module-graph and checksum changes.
+Telemetry source behavior and the Go 1.26.11 pin are unchanged. The vulnerability
+gate remains required alongside the behavior and reproducibility checks.
+
 Regression tests cover real Git workspace, commit and range selection, ignored
 tracked modifications, empty and nonempty deletions, both rename directions,
 literal paths, immutable inventory, preview/run agreement, prompt contents and
