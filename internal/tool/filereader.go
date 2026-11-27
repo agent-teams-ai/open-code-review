@@ -61,8 +61,9 @@ type FileReader struct {
 	Mode    ReviewMode
 	// Ref is the git ref to use for ModeRange (--to) or ModeCommit (--commit).
 	// Empty for ModeWorkspace.
-	Ref    string
-	Runner *gitcmd.Runner
+	Ref             string
+	Runner          *gitcmd.Runner
+	managedExcluded map[string]bool
 }
 
 // Read returns the full content of a file path (relative to RepoDir),
@@ -70,6 +71,9 @@ type FileReader struct {
 // - Workspace: reads directly from the filesystem.
 // - Range / Commit: uses `git show <Ref>:<path>` to read at the given ref.
 func (fr *FileReader) Read(ctx context.Context, path string) (string, error) {
+	if !fr.allowsPath(path) {
+		return "", fmt.Errorf("path is unavailable to managed context tools")
+	}
 	switch fr.Mode {
 	case ModeEmpty:
 		return "", fmt.Errorf("file %q does not exist in the empty tree", path)
@@ -91,7 +95,7 @@ func (fr *FileReader) readFromDisk(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read file %q: %w", path, err)
 	}
-	return string(content), nil
+	return fr.contextText(content)
 }
 
 func (fr *FileReader) resolveWorkspacePath(path string) (string, error) {
@@ -115,6 +119,12 @@ func (fr *FileReader) resolveWorkspacePath(path string) (string, error) {
 	if !pathutil.WithinBase(repoRoot, resolvedPath) {
 		return "", fmt.Errorf("file path %q is outside repository", path)
 	}
+	if fr.managedExcluded != nil {
+		rel, err := filepath.Rel(repoRoot, resolvedPath)
+		if err != nil || !fr.allowsPath(filepath.ToSlash(rel)) {
+			return "", fmt.Errorf("path is unavailable to managed context tools")
+		}
+	}
 	return resolvedPath, nil
 }
 
@@ -128,7 +138,7 @@ func (fr *FileReader) readFromGitShow(parentCtx context.Context, path string) (s
 		if err != nil {
 			return "", fmt.Errorf("git show %s:%s: %w", fr.Ref, path, err)
 		}
-		return string(output), nil
+		return fr.contextText(output)
 	}
 
 	cmd := exec.CommandContext(ctx, "git", args...)
@@ -137,12 +147,15 @@ func (fr *FileReader) readFromGitShow(parentCtx context.Context, path string) (s
 	if err != nil {
 		return "", fmt.Errorf("git show %s:%s: %w", fr.Ref, path, err)
 	}
-	return string(output), nil
+	return fr.contextText(output)
 }
 
 // ReadLines returns a window of lines from the file plus the total line count.
 // startLine is 1-based; maxLines is the maximum number of lines to collect.
 func (fr *FileReader) ReadLines(ctx context.Context, path string, startLine, maxLines int) ([]string, int, error) {
+	if !fr.allowsPath(path) {
+		return nil, 0, fmt.Errorf("path is unavailable to managed context tools")
+	}
 	switch fr.Mode {
 	case ModeEmpty:
 		return nil, 0, fmt.Errorf("file %q does not exist in the empty tree", path)
@@ -206,7 +219,7 @@ func (fr *FileReader) readLinesFromDisk(path string, startLine, maxLines int) ([
 	}
 	defer f.Close()
 
-	return scanLines(f, startLine, maxLines)
+	return fr.scanLines(f, startLine, maxLines)
 }
 
 func (fr *FileReader) readLinesFromGitShow(ctx context.Context, path string, startLine, maxLines int) ([]string, int, error) {
@@ -218,7 +231,7 @@ func (fr *FileReader) readLinesFromGitShow(ctx context.Context, path string, sta
 	if fr.Runner != nil {
 		err := fr.Runner.Stream(ctx, fr.RepoDir, func(stdout io.Reader) error {
 			var scanErr error
-			collected, totalLines, scanErr = scanLines(stdout, startLine, maxLines)
+			collected, totalLines, scanErr = fr.scanLines(stdout, startLine, maxLines)
 			return scanErr
 		}, args...)
 		if err != nil {
@@ -237,7 +250,7 @@ func (fr *FileReader) readLinesFromGitShow(ctx context.Context, path string, sta
 		return nil, 0, fmt.Errorf("git show %s:%s: %w", fr.Ref, path, err)
 	}
 
-	collected, totalLines, scanErr := scanLines(stdoutPipe, startLine, maxLines)
+	collected, totalLines, scanErr := fr.scanLines(stdoutPipe, startLine, maxLines)
 	if scanErr != nil {
 		cmd.Process.Kill()
 	}

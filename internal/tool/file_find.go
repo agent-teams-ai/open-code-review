@@ -50,7 +50,7 @@ func (p *FileFindProvider) execute(ctx context.Context, args map[string]any) (st
 		return "", err
 	}
 
-	matched, err := MatchFileNames(ctx, files, queryName, caseSensitive, fileFindMaxCount, nil)
+	matched, err := MatchFileNames(ctx, files, queryName, caseSensitive, fileFindMaxCount, p.FileReader.allowsPath)
 	if err != nil {
 		return "", err
 	}

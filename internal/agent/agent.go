@@ -195,7 +195,8 @@ type Agent struct {
 	resumeInfo      *ResumeInfo
 	budgetExceeded  atomic.Bool // set when a token/tool-call budget gate stopped dispatch
 
-	fileGroups []FileGroup // semantic grouping result, stored for JSON output
+	fileGroups           []FileGroup // semantic grouping result, stored for JSON output
+	contextExcludedPaths []string
 
 	// inputResolution holds this run's frozen commit endpoints (resolved_base/
 	// head/exact_range), and repoRemoteIdentity the credential-free repository
@@ -337,8 +338,7 @@ func (a *Agent) Run(ctx context.Context) ([]model.LlmComment, error) {
 	telemetry.SetAttr(diffSpan, "lines.deleted", int64(a.totalDeletions))
 	diffSpan.End()
 
-	// Build the read-only DiffMap from ALL parsed diffs (before filtering)
-	// so the LLM can query diffs of related but filtered-out files.
+	// Preserve related context while applying managed hard exclusions to tools.
 	a.injectDiffMap()
 	a.args.Tools.Freeze()
 
@@ -609,29 +609,42 @@ func (a *Agent) newDiffProvider() *diff.Provider {
 		}
 	}
 
+	var provider *diff.Provider
 	switch {
 	case commit != "":
-		return diff.NewCommitProvider(a.args.RepoDir, commit, a.args.GitRunner)
+		provider = diff.NewCommitProvider(a.args.RepoDir, commit, a.args.GitRunner)
 	case from != "" && to != "":
-		return diff.NewProvider(a.args.RepoDir, from, to, a.args.GitRunner)
+		provider = diff.NewProvider(a.args.RepoDir, from, to, a.args.GitRunner)
+	case a.args.SealedInput != nil:
+		provider = diff.NewWorkspaceProviderWithBase(a.args.RepoDir, *a.args.SealedInput, a.args.GitRunner)
 	default:
-		if a.args.SealedInput != nil {
-			return diff.NewWorkspaceProviderWithBase(a.args.RepoDir, *a.args.SealedInput, a.args.GitRunner)
-		}
-		return diff.NewWorkspaceProvider(a.args.RepoDir, a.args.GitRunner)
+		provider = diff.NewWorkspaceProvider(a.args.RepoDir, a.args.GitRunner)
 	}
+	if a.args.FileFilter != nil {
+		provider.SetManagedPaths(a.args.FileFilter.ManagedPaths)
+	}
+	return provider
 }
 
 // loadDiffs populates the diff-related fields used by normal review runs.
 func (a *Agent) loadDiffs(ctx context.Context) error {
 	provider := a.newDiffProvider()
 
-	parsed, err := provider.GetDiff(ctx)
+	set, err := provider.GetDiffSet(ctx)
 	if err != nil {
 		return fmt.Errorf("get diffs: %w", err)
 	}
 
-	a.diffs = parsed
+	a.diffs = set.Included
+	a.contextExcludedPaths = nil
+	if a.args.Managed || (a.args.FileFilter != nil && a.args.FileFilter.ManagedPaths != nil) {
+		for _, d := range set.Ignored {
+			switch a.whyExcluded(d) {
+			case ExcludeSecret, ExcludeBinary:
+				a.contextExcludedPaths = append(a.contextExcludedPaths, d.OldPath, d.NewPath)
+			}
+		}
+	}
 
 	// Freeze this run's real commit endpoints and repository identity while the
 	// git-backed provider and a live context are in hand; finalizeManifest reads
@@ -654,9 +667,21 @@ func (a *Agent) loadDiffs(ctx context.Context) error {
 // any concurrent access to the registry.
 func (a *Agent) injectDiffMap() {
 	m := make(map[string]string, len(a.diffs))
+	managed := a.args.Managed || (a.args.FileFilter != nil && a.args.FileFilter.ManagedPaths != nil)
+	excluded := append([]string(nil), a.contextExcludedPaths...)
 	for i := range a.diffs {
 		d := &a.diffs[i]
+		if managed {
+			switch a.whyExcluded(*d) {
+			case ExcludeSecret, ExcludeBinary:
+				excluded = append(excluded, d.OldPath, d.NewPath)
+				continue
+			}
+		}
 		m[effectivePath(*d)] = d.Diff
+	}
+	if managed {
+		a.args.Tools.SetManagedContextExclusions(excluded)
 	}
 	dm := tool.NewDiffMap(m)
 	if p, ok := a.args.Tools.Get(tool.FileReadDiff.Name()); ok {

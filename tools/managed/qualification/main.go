@@ -101,14 +101,15 @@ type resultDocument struct {
 }
 
 type fakeProvider struct {
-	mu        sync.Mutex
-	protocol  string
-	model     string
-	token     string
-	malformed bool
-	requests  int
-	mainTurns int
-	problem   error
+	mu          sync.Mutex
+	protocol    string
+	model       string
+	token       string
+	malformed   bool
+	requests    int
+	mainTurns   int
+	problem     error
+	contextSeen bool
 }
 
 func main() {
@@ -274,7 +275,12 @@ func runCase(binary, protocol string, malformed bool) (observation caseReceipt) 
 		return fail(err)
 	}
 	rulePath := filepath.Join(workspace, "rule.json")
-	rule := map[string]any{"merge_system_rule": true, "include": []string{"calc.ts"}, "rules": []map[string]string{{"id": "reviewrouter-managed-v1", "content": "Report only issues introduced by the base-to-head diff in the assigned changed paths. Write findings in English."}}}
+	paths := []string{"calc.ts", "tmp/.env", "tmp/data.bin", "vendor/blocked.go"}
+	rules := make([]map[string]any, 0, len(paths))
+	for _, name := range paths {
+		rules = append(rules, map[string]any{"path": name, "rule": "Report only issues introduced by the base-to-head diff in the assigned changed paths. Write findings in English.", "merge_system_rule": true, "reviewrouter_exact_path": true})
+	}
+	rule := map[string]any{"reviewrouter_managed_paths": paths, "rules": rules}
 	if err := writeJSON(rulePath, rule); err != nil {
 		return fail(err)
 	}
@@ -288,6 +294,7 @@ func runCase(binary, protocol string, malformed bool) (observation caseReceipt) 
 	fake.mu.Lock()
 	observation.Requests = fake.requests
 	providerErr := fake.problem
+	contextSeen := fake.contextSeen
 	fake.mu.Unlock()
 	if err != nil {
 		return fail(err)
@@ -320,7 +327,7 @@ func runCase(binary, protocol string, malformed bool) (observation caseReceipt) 
 			return fail(errors.New("malformed terminal was accepted or replayed"))
 		}
 	} else {
-		if observation.ExitCode != 0 || observation.Requests < 3 || len(result.Comments) != 1 ||
+		if observation.ExitCode != 0 || observation.Requests < 8 || !contextSeen || len(result.Comments) != 1 ||
 			result.Comments[0].Path != "calc.ts" || result.Comments[0].Severity != "high" ||
 			result.Comments[0].Content != fixtureText || !group.MainCompleted || group.StopCause != nil ||
 			group.FilterValid == nil || !*group.FilterValid || group.Phases.Filter.State != "completed" ||
@@ -356,6 +363,13 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		fail("fake-provider request body exceeded bounds")
 		return
 	}
+	if bytes.Contains(body, []byte("PRIVATE_TOOL_MARKER")) || bytes.Contains(body, []byte("BINARY_TOOL_MARKER")) || bytes.Contains(body, []byte("PROVIDER_TOOL_MARKER")) {
+		fail("hard excluded content reached the fake provider")
+		return
+	}
+	if bytes.Contains(body, []byte("RELATED_TOOL_MARKER")) {
+		f.contextSeen = true
+	}
 	var input struct {
 		Model        string                  `json:"model"`
 		Stream       bool                    `json:"stream"`
@@ -388,7 +402,18 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		if offered.Name == "task_done" {
 			f.mainTurns++
 			tool = "task_done"
-			if f.mainTurns == 1 {
+			switch f.mainTurns {
+			case 1:
+				tool, args = "file_read", map[string]any{"file_path": "tmp/.env"}
+			case 2:
+				tool, args = "file_read", map[string]any{"file_path": "tmp/data.bin"}
+			case 3:
+				tool, args = "code_search", map[string]any{"search_text": "TOOL_MARKER"}
+			case 4:
+				tool, args = "file_read_diff", map[string]any{"path_array": []string{"tmp/.env", "tmp/data.bin", "tmp/renamed-secret.go", "vendor/blocked.go", "related.go", "deleted.go"}}
+			case 5:
+				tool, args = "file_read", map[string]any{"file_path": "tmp/renamed-secret.go"}
+			case 6:
 				tool = "code_comment"
 				args["comments"] = []map[string]string{{"path": "calc.ts", "content": fixtureText, "severity": "high"}}
 			}
@@ -509,7 +534,24 @@ func makeFixture(repo string, env []string) (string, string, error) {
 	if err := os.WriteFile(file, []byte("export function add(a: number, b: number) { return a + b; }\n"), 0o600); err != nil {
 		return "", "", err
 	}
-	for _, args := range [][]string{{"add", "calc.ts"}, {"commit", "-qm", "base"}} {
+	for name, contents := range map[string]string{
+		".gitignore":        "tmp/\nvendor/\n",
+		"tmp/.env":          "PRIVATE_TOOL_MARKER old\n",
+		"tmp/data.bin":      "\x00BINARY_TOOL_MARKER old\n",
+		".env.old":          "PRIVATE_TOOL_MARKER renamed\n",
+		"vendor/blocked.go": "PROVIDER_TOOL_MARKER old\n",
+		"related.go":        "RELATED_TOOL_MARKER old\n",
+		"deleted.go":        "RELATED_TOOL_MARKER deleted\n",
+	} {
+		filename := filepath.Join(repo, name)
+		if err := os.MkdirAll(filepath.Dir(filename), 0o700); err != nil {
+			return "", "", err
+		}
+		if err := os.WriteFile(filename, []byte(contents), 0o600); err != nil {
+			return "", "", err
+		}
+	}
+	for _, args := range [][]string{{"add", "-f", "."}, {"commit", "-qm", "base"}} {
 		if _, err := git(args...); err != nil {
 			return "", "", err
 		}
@@ -519,6 +561,25 @@ func makeFixture(repo string, env []string) (string, string, error) {
 		return "", "", err
 	}
 	if err := os.WriteFile(file, []byte("export function add(a: number, b: number) { return a - b; }\n"), 0o600); err != nil {
+		return "", "", err
+	}
+	for name, contents := range map[string]string{
+		"tmp/.env":          "PRIVATE_TOOL_MARKER new\n",
+		"tmp/data.bin":      "\x00BINARY_TOOL_MARKER new\n",
+		"vendor/blocked.go": "PROVIDER_TOOL_MARKER new\n",
+		"related.go":        "RELATED_TOOL_MARKER new\n",
+	} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(contents), 0o600); err != nil {
+			return "", "", err
+		}
+	}
+	if err := os.Rename(filepath.Join(repo, ".env.old"), filepath.Join(repo, "tmp/renamed-secret.go")); err != nil {
+		return "", "", err
+	}
+	if err := os.Remove(filepath.Join(repo, "deleted.go")); err != nil {
+		return "", "", err
+	}
+	if _, err := git("add", "-f", "."); err != nil {
 		return "", "", err
 	}
 	if _, err := git("commit", "-qam", "head"); err != nil {

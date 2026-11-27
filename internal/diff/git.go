@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -62,6 +63,7 @@ type Provider struct {
 
 	mergeBase     string // cached common ancestor for range mode
 	workspaceBase *InputResolution
+	managedPaths  map[string]bool
 }
 
 // DiffSet separates the diffs a review may process from files excluded by the
@@ -72,8 +74,11 @@ type Provider struct {
 // Excluded combined, so ForEachInOrder can walk the two slices as Git listed
 // them rather than every provider exclusion first.
 type DiffSet struct {
-	Included   []model.Diff
-	Excluded   []model.Diff
+	Included []model.Diff
+	Excluded []model.Diff
+	// Ignored contains only path and binary identities, never diff or content.
+	// Managed context needs both names of a secret rename omitted by .gitignore.
+	Ignored    []model.Diff
 	excludedAt []int
 }
 
@@ -203,6 +208,11 @@ func (p *Provider) MergeBase(ctx context.Context) string {
 	return p.mergeBase
 }
 
+// SetManagedPaths copies the admitted inventory before any diff filtering.
+func (p *Provider) SetManagedPaths(paths map[string]bool) {
+	p.managedPaths = maps.Clone(paths)
+}
+
 // GetDiff returns the changes available to a review as parsed model.Diff structs.
 func (p *Provider) GetDiff(ctx context.Context) ([]model.Diff, error) {
 	set, err := p.GetDiffSet(ctx)
@@ -277,7 +287,7 @@ func (p *Provider) GetDiffSet(ctx context.Context) (DiffSet, error) {
 			return DiffSet{}, err
 		}
 	}
-	return partitionDiffs(diffs, patterns), nil
+	return partitionDiffs(diffs, patterns, p.managedPaths), nil
 }
 
 // loadGitignorePatterns reads and parses .gitignore patterns from the repo root.
@@ -440,7 +450,7 @@ func matchGitignoreDirectory(relPath, pattern string) bool {
 //
 // In workspace mode, ignored untracked files are already filtered out.
 // Applying .gitignore here would incorrectly drop tracked changes.
-func partitionDiffs(diffs []model.Diff, patterns GitignorePatterns) DiffSet {
+func partitionDiffs(diffs []model.Diff, patterns GitignorePatterns, managedPaths map[string]bool) DiffSet {
 	result := DiffSet{
 		Included: make([]model.Diff, 0, len(diffs)),
 		Excluded: make([]model.Diff, 0),
@@ -453,8 +463,12 @@ func partitionDiffs(diffs []model.Diff, patterns GitignorePatterns) DiffSet {
 		if isProviderDirExcluded(path) {
 			result.excludedAt = append(result.excludedAt, len(result.Included)+len(result.Excluded))
 			result.Excluded = append(result.Excluded, d)
-		} else if !patterns.Matches(path) {
+		} else if managedPaths[path] || !patterns.Matches(path) {
 			result.Included = append(result.Included, d)
+		} else {
+			result.Ignored = append(result.Ignored, model.Diff{
+				OldPath: d.OldPath, NewPath: d.NewPath, IsBinary: d.IsBinary,
+			})
 		}
 	}
 	return result
