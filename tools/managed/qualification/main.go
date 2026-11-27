@@ -414,6 +414,8 @@ func (f *fakeProvider) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 			case 5:
 				tool, args = "file_read", map[string]any{"file_path": "tmp/renamed-secret.go"}
 			case 6:
+				tool, args = "file_read", map[string]any{"file_path": "old-normal.go", "side": "old"}
+			case 7:
 				tool = "code_comment"
 				args["comments"] = []map[string]string{{"path": "calc.ts", "content": fixtureText, "severity": "high"}}
 			}
@@ -539,6 +541,7 @@ func makeFixture(repo string, env []string) (string, string, error) {
 		"tmp/.env":          "PRIVATE_TOOL_MARKER old\n",
 		"tmp/data.bin":      "\x00BINARY_TOOL_MARKER old\n",
 		".env.old":          "PRIVATE_TOOL_MARKER renamed\n",
+		"old-normal.go":     "PRIVATE_TOOL_MARKER provider rename\n",
 		"vendor/blocked.go": "PROVIDER_TOOL_MARKER old\n",
 		"related.go":        "RELATED_TOOL_MARKER old\n",
 		"deleted.go":        "RELATED_TOOL_MARKER deleted\n",
@@ -574,6 +577,9 @@ func makeFixture(repo string, env []string) (string, string, error) {
 		}
 	}
 	if err := os.Rename(filepath.Join(repo, ".env.old"), filepath.Join(repo, "tmp/renamed-secret.go")); err != nil {
+		return "", "", err
+	}
+	if err := os.Rename(filepath.Join(repo, "old-normal.go"), filepath.Join(repo, "vendor/.env")); err != nil {
 		return "", "", err
 	}
 	if err := os.Remove(filepath.Join(repo, "deleted.go")); err != nil {

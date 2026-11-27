@@ -32,6 +32,9 @@ names of an excluded rename stay excluded from file context. For tracked diffs
 omitted by `.gitignore`, the provider retains only old/new path and binary
 identities so an unassigned secret renamed into an ignored normal path cannot
 bypass that boundary. Preview entries, order and counts stay unchanged.
+Secret and binary aliases from provider-directory exclusions receive the same
+guard; ordinary non-secret files renamed into those directories retain readable
+old context.
 
 The built-in managed `file_read`, `code_search` and `file_find` tools apply the
 same secret-path and provider-directory rules on both comparison sides. File
@@ -56,8 +59,9 @@ before 8 KB of text and a later NUL to test whole-file validation.
 The existing four model-free managed CLI qualification cases retain their
 protocol and terminal-response checks. Each positive case now asks the real
 CLI to read excluded secret and binary files, search context, request excluded
-and permitted diffs, and read an unassigned secret renamed into an ignored normal
-filename. The fake provider rejects any request containing the fixture's
+and permitted diffs, read an unassigned secret renamed into an ignored normal
+filename, and read the old side of a normal file renamed to a provider-directory
+secret. The fake provider rejects any request containing the fixture's
 excluded-content markers and requires permitted related context to reach a later
 request. No model credentials or external provider calls are used.
 

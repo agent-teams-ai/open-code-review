@@ -638,10 +638,12 @@ func (a *Agent) loadDiffs(ctx context.Context) error {
 	a.diffs = set.Included
 	a.contextExcludedPaths = nil
 	if a.args.Managed || (a.args.FileFilter != nil && a.args.FileFilter.ManagedPaths != nil) {
-		for _, d := range set.Ignored {
-			switch a.whyExcluded(d) {
-			case ExcludeSecret, ExcludeBinary:
-				a.contextExcludedPaths = append(a.contextExcludedPaths, d.OldPath, d.NewPath)
+		for _, omitted := range [][]model.Diff{set.Ignored, set.Excluded} {
+			for _, d := range omitted {
+				switch a.whyExcluded(d) {
+				case ExcludeSecret, ExcludeBinary:
+					a.contextExcludedPaths = append(a.contextExcludedPaths, d.OldPath, d.NewPath)
+				}
 			}
 		}
 	}

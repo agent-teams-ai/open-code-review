@@ -243,3 +243,66 @@ func TestReviewRouterManagedDiffToolHardExclusions(t *testing.T) {
 		})
 	}
 }
+
+func TestReviewRouterManagedProviderExcludedContextAliases(t *testing.T) {
+	repo := initPreviewRepo(t)
+	for path, content := range map[string]string{
+		"old-normal.go":  "PRIVATE_PROVIDER_ALIAS_CONTEXT_MARKER\n",
+		"old-related.go": "RELATED_PROVIDER_ALIAS_CONTEXT_MARKER\n",
+	} {
+		if err := os.WriteFile(filepath.Join(repo, path), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-qm", "old context")
+	if err := os.Mkdir(filepath.Join(repo, "vendor"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "mv", "old-normal.go", "vendor/.env")
+	gitIn(t, repo, "mv", "old-related.go", "vendor/related.go")
+	commitIn(t, repo, "safe.go", "package safe\n", "provider renames")
+	current := tool.FileReader{RepoDir: repo, Mode: tool.ModeCommit, Ref: "HEAD"}
+	previous := tool.FileReader{RepoDir: repo, Mode: tool.ModeCommit, Ref: "HEAD^"}
+	access, err := tool.NewComparisonCodeAccess(current, previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := tool.NewFileRead(&current)
+	reader.Access = access
+	search := tool.NewCodeSearch(&current)
+	search.Access = access
+	registry := tool.NewRegistry()
+	registry.Register(reader)
+	registry.Register(search)
+	a := &Agent{args: Args{RepoDir: repo, From: "HEAD^", To: "HEAD", Managed: true, Tools: registry,
+		FileFilter: &rules.FileFilter{ManagedPaths: map[string]bool{"safe.go": true}},
+	}}
+	ctx := context.Background()
+	set, err := a.newDiffProvider().GetDiffSet(ctx)
+	if err != nil || len(set.Excluded) != 2 {
+		t.Fatalf("provider rename fixture invalid: %+v, %v", set, err)
+	}
+	want := map[string]string{"old-normal.go": "vendor/.env", "old-related.go": "vendor/related.go"}
+	for _, d := range set.Excluded {
+		if !d.IsRenamed || want[d.OldPath] != d.NewPath {
+			t.Fatalf("missing provider rename identity: %+v", d)
+		}
+	}
+	if err := a.loadDiffs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a.injectDiffMap()
+	result, err := reader.Execute(ctx, map[string]any{"file_path": "old-normal.go", "side": "old"})
+	if err == nil || result != "" || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("secret rename old alias was not excluded: %q, %v", result, err)
+	}
+	result, err = reader.Execute(ctx, map[string]any{"file_path": "old-related.go", "side": "old"})
+	if err != nil || !strings.Contains(result, "RELATED_PROVIDER_ALIAS_CONTEXT_MARKER") {
+		t.Fatalf("ordinary provider rename lost old context: %q, %v", result, err)
+	}
+	result, err = search.Execute(ctx, map[string]any{"search_text": "_CONTEXT_MARKER", "side": "old"})
+	if err != nil || strings.Contains(result, "PRIVATE_PROVIDER_ALIAS_CONTEXT_MARKER") || !strings.Contains(result, "RELATED_PROVIDER_ALIAS_CONTEXT_MARKER") {
+		t.Fatalf("old-side search violated provider rename boundary: %q, %v", result, err)
+	}
+}

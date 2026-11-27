@@ -104,9 +104,9 @@ func TestQualificationEndToEnd(t *testing.T) {
 		t.Fatalf("receipt is not bound to the built source and binary: %s", data)
 	}
 	want := []caseReceipt{
-		{Name: "openai-responses/finding", Passed: true, Requests: 10, ExitCode: 0, Findings: 1, TerminalState: "complete"},
+		{Name: "openai-responses/finding", Passed: true, Requests: 11, ExitCode: 0, Findings: 1, TerminalState: "complete"},
 		{Name: "openai-responses/missing-terminal", Passed: true, Requests: 1, ExitCode: 1, Findings: 0, TerminalState: "failed"},
-		{Name: "anthropic/finding", Passed: true, Requests: 10, ExitCode: 0, Findings: 1, TerminalState: "complete"},
+		{Name: "anthropic/finding", Passed: true, Requests: 11, ExitCode: 0, Findings: 1, TerminalState: "complete"},
 		{Name: "anthropic/missing-terminal", Passed: true, Requests: 1, ExitCode: 1, Findings: 0, TerminalState: "failed"},
 	}
 	for i, expected := range want {
