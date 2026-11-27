@@ -19,6 +19,57 @@ const (
 	gitGrepTimeout  = 10 * time.Second
 )
 
+type grepMatch struct {
+	path    string
+	line    int
+	content string
+}
+
+func parseGrepMatches(output, ref string, nul bool) []grepMatch {
+	var matches []grepMatch
+	if nul {
+		// NUL boundaries keep colons and newlines in filenames out of content.
+		for output != "" {
+			filename, rest, ok := strings.Cut(output, "\x00")
+			if !ok {
+				break
+			}
+			line, rest, ok := strings.Cut(rest, "\x00")
+			if !ok {
+				break
+			}
+			content, remaining, _ := strings.Cut(rest, "\n")
+			output = remaining
+			if ref != "" {
+				filename, ok = strings.CutPrefix(filename, ref+":")
+				if !ok {
+					continue
+				}
+			}
+			number, err := strconv.Atoi(line)
+			if err == nil && number > 0 {
+				matches = append(matches, grepMatch{filename, number, content})
+			}
+		}
+		return matches
+	}
+	count, offset := 3, 0
+	if ref != "" {
+		count, offset = 4, 1
+	}
+	for line := range strings.SplitSeq(strings.TrimRight(output, "\n"), "\n") {
+		parts := strings.SplitN(line, ":", count)
+		if len(parts) != count {
+			continue
+		}
+		number, err := strconv.Atoi(parts[offset+1])
+		if err == nil {
+			matches = append(matches, grepMatch{parts[offset], number, parts[offset+2]})
+		}
+	}
+	return matches
+}
+
 // CodeSearchProvider performs text search across the repository using git grep.
 type CodeSearchProvider struct {
 	FileReader *FileReader
@@ -69,6 +120,9 @@ func (p *CodeSearchProvider) buildGrepArgs(searchText string, caseSensitive bool
 	// core.quotepath=false reports non-ASCII paths literally instead of as
 	// quoted octal escapes, which file_read cannot open.
 	cmdArgs := []string{"--no-pager", "-c", "core.quotepath=false", "grep"}
+	if p.FileReader.managedExcluded != nil {
+		cmdArgs = append(cmdArgs, "-I", "-z")
+	}
 
 	if noIndex {
 		// Non-git directory: search the working tree directly while still
@@ -192,8 +246,6 @@ func (p *CodeSearchProvider) gitGrep(ctx context.Context, searchText string, cas
 		}
 	}
 
-	lines := strings.Split(strings.TrimRight(outStr, "\n"), "\n")
-
 	type match struct {
 		lineNum int
 		content string
@@ -202,30 +254,31 @@ func (p *CodeSearchProvider) gitGrep(ctx context.Context, searchText string, cas
 	var fileOrder []string
 	seen := make(map[string]bool)
 
-	hasRef := p.FileReader.Ref != ""
-	splitN := 3
-	offset := 0
-	if hasRef {
-		splitN = 4
-		offset = 1
-	}
-
 	matchCount := 0
 	truncated := false
 	matchedFiles := make(map[string]bool)
-	for _, line := range lines {
-		if line == "" {
+	managed := p.FileReader.managedExcluded != nil
+	readablePaths := make(map[string]bool)
+	for _, row := range parseGrepMatches(outStr, p.FileReader.Ref, managed) {
+		fname := row.path
+		if !p.FileReader.allowsPath(fname) {
 			continue
 		}
-		parts := strings.SplitN(line, ":", splitN)
-		if len(parts) < splitN {
-			continue
-		}
-		fname := parts[offset]
-		ln, parseErr := strconv.Atoi(parts[offset+1])
-		if parseErr != nil {
-			// Skip lines whose line-number field is not numeric.
-			continue
+		if managed {
+			readable, checked := readablePaths[fname]
+			if !checked {
+				// Git only checks the start of a file for binary content. Scan the
+				// full source once before returning any matching line from it.
+				_, _, err := p.FileReader.ReadLines(ctx, fname, 1, 0)
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return "", err
+				}
+				readable = err == nil
+				readablePaths[fname] = readable
+			}
+			if !readable {
+				continue
+			}
 		}
 		// Count every file with a text match, including those beyond the render
 		// budget, so the truncation note can report the true matched-file count.
@@ -235,7 +288,7 @@ func (p *CodeSearchProvider) gitGrep(ctx context.Context, searchText string, cas
 			truncated = true
 			continue
 		}
-		m := match{lineNum: ln, content: parts[offset+2]}
+		m := match{lineNum: row.line, content: row.content}
 		if !seen[fname] {
 			seen[fname] = true
 			fileOrder = append(fileOrder, fname)

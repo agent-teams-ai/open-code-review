@@ -11,6 +11,9 @@ The checked-out Go source is the maintained implementation. Future fixes belong
 in ordinary source commits here. Do not maintain a second, independently edited
 patch stack in ReviewRouter.
 
+The recovered tracked-inventory work and its stale patch-based delivery plan
+are reconciled in [the managed inventory plan](managed-tracked-inventory.md).
+
 ## Scope and ownership
 
 The fork owns the native executable, its managed CLI behavior and outcome
